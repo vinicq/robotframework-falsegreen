@@ -10,6 +10,10 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- Three groups (`false-positive` / `diagnostic` / `coupling`), like the sibling scanners.
+  Opt-in maintainability group (default off, `--diagnostics`): D2 (control flow at the
+  test/task level), M2 (too many steps).
+- RPA support: scans `*** Tasks ***` in addition to `*** Test Cases ***`.
 - Initial release. Deterministic static scanner for false-positive Robot Framework
   tests, built on the official `robot.api.get_model` parser (no execution).
 - Detection codes: C2 (empty test), C2b (no verification keyword), C3 (swallowed

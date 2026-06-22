@@ -25,6 +25,7 @@ JUDGMENTS = {
     "J1": "does the verification run?",
     "J2": "is the oracle independent of the code?",
     "J4": "does it check enough, and the right thing?",
+    "J5": "is it coupled / hard to maintain?",
 }
 CASES = {
     "C2":  ("empty test case (no keywords run)", "high", "J1"),
@@ -36,9 +37,22 @@ CASES = {
     "C21": ("verification only runs conditionally (inside IF / Run Keyword If) — it may never execute", "low", "J1"),
     "C32": ("skipped test (robot:skip / Skip) never runs", "low", "J1"),
     "R1":  ("Pass Execution forces the test to pass regardless of any check (forced green)", "high", "J1"),
+    # --- diagnostic group (maintainability; default off, opt-in via --diagnostics) ---
+    "D2":  ("control flow (IF/FOR/WHILE/TRY) at the test/task level — the guide advises against it", "off", "J4"),
+    # --- coupling group (structure; default off, opt-in) ----------------------
+    "M2":  ("test/task has too many steps (the guide suggests max ~10)", "off", "J5"),
 }
 
-def group_of(code):  # one group here; mirrors the sibling tools' API
+# Default thresholds for the opt-in groups (overridable later via config).
+DIAGNOSTIC_THRESHOLDS = {"long_test_steps": 10}
+
+
+def group_of(code):
+    """false-positive (C*/R*) / diagnostic (D*) / coupling (M*) — mirrors the siblings."""
+    if code.startswith("D"):
+        return "diagnostic"
+    if code.startswith("M"):
+        return "coupling"
     return "false-positive"
 
 # --- verification vocabulary (the oracle), across Robot libraries ----------
@@ -211,6 +225,12 @@ def analyze_testcase(file, tc, findings):
         if is_verification(kw, args) or _rkif_verifies(c):
             has_verification = True
 
+    # diagnostic/coupling group (off by default; emitted always, filtered in scan)
+    if _has_control_block(tc):
+        findings.append(Finding(file, line, name, "D2"))
+    if len(calls) > DIAGNOSTIC_THRESHOLDS["long_test_steps"]:
+        findings.append(Finding(file, line, name, "M2", "%d steps" % len(calls)))
+
     # C3: native TRY/EXCEPT whose EXCEPT swallows the failure
     for tb in _try_blocks(tc):
         if _try_body_has_keyword(tb) and _except_swallows(tb):
@@ -259,6 +279,9 @@ def analyze_file(path):
         def visit_TestCase(self, node):
             analyze_testcase(path, node, self_findings)
 
+        def visit_Task(self, node):  # RPA suites use *** Tasks ***, not *** Test Cases ***
+            analyze_testcase(path, node, self_findings)
+
     _V().visit(model)
     return findings
 
@@ -286,13 +309,21 @@ def discover(paths):
     return sorted(set(files))
 
 
-def scan(paths, disable=None):
+def _eff_conf(code):
+    """Effective confidence: an off-by-default (D*/M*) code shows as 'low' when enabled."""
+    c = CASES[code][1]
+    return "low" if c == "off" else c
+
+
+def scan(paths, disable=None, diagnostics=False):
     disable = disable or set()
     out = []
     for f in discover(paths):
         for finding in analyze_file(f):
             conf = CASES[finding.code][1]
-            if finding.code in disable or conf == "off":
+            if finding.code in disable:
+                continue
+            if conf == "off" and not diagnostics:
                 continue
             out.append(finding)
     return out
@@ -308,7 +339,8 @@ def _render_text(findings):
     for file, fs in by_file.items():
         lines.append("\n" + file)
         for f in sorted(fs, key=lambda x: x.line):
-            title, conf, _ = CASES[f.code]
+            title = CASES[f.code][0]
+            conf = _eff_conf(f.code)
             tag = "HIGH" if conf == "high" else "low "
             high += conf == "high"
             low += conf == "low"
@@ -325,17 +357,19 @@ def main(argv=None):
     p.add_argument("paths", nargs="*", default=["."], help="files or directories (default: cwd)")
     p.add_argument("--json", action="store_true", help="JSON output")
     p.add_argument("--disable", default="", help="comma-separated codes to turn off")
+    p.add_argument("--diagnostics", action="store_true",
+                   help="also report the opt-in maintainability group (D*/M*)")
     p.add_argument("--version", action="version", version=__version__)
     args = p.parse_args(argv)
     disable = {c.strip() for c in args.disable.split(",") if c.strip()}
-    findings = scan(args.paths or ["."], disable=disable)
+    findings = scan(args.paths or ["."], disable=disable, diagnostics=args.diagnostics)
     if args.json:
         print(json.dumps({"tool": "falsegreen-robot", "version": __version__,
                           "judgments": JUDGMENTS,
                           "findings": [f.dict() for f in findings]}, indent=2))
     else:
         print(_render_text(findings))
-    if any(CASES[f.code][1] == "high" for f in findings):
+    if any(_eff_conf(f.code) == "high" for f in findings):
         return 20
     if findings:
         return 10

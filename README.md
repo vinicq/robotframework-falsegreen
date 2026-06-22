@@ -56,7 +56,24 @@ RESTinstance schema keywords, DatabaseLibrary `Row Count Should Be Equal`, custo
 | C32 | low  | skipped test (`robot:skip` / `Skip`) |
 | R1  | high | `Pass Execution` forces the test green regardless of any check |
 
-Codes share ids with the sibling scanners where the concept matches (C2/C2b/C3/C5/C7/C16/C32).
+Scans both `*** Test Cases ***` and `*** Tasks ***` (RPA suites use Tasks).
+
+### Opt-in: maintainability group (default off)
+
+Not false-green - the test still verifies - so off by default. Enable with `--diagnostics`.
+Three groups, mirroring `falsegreen` and `falsegreen-js`: `false-positive` (C*/R*, on),
+`diagnostic` (D*, opt-in), `coupling` (M*, opt-in).
+
+| Code | Group | What it flags |
+|---|---|---|
+| D2 | diagnostic | control flow (`IF`/`FOR`/`WHILE`/`TRY`) at the test/task level (the guide advises against it) |
+| M2 | coupling | test/task with too many steps (guide suggests max ~10) |
+
+```bash
+falsegreen-robot --diagnostics    # include D*/M* as warnings
+```
+
+Codes share ids with the sibling scanners where the concept matches (C2/C2b/C3/C5/C7/C16/C21/C32).
 A Browser `Get` keyword with no assertion operator is a plain getter, so a test whose only
 step is `Get Text  h1` surfaces as no-verification (C2b).
 

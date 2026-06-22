@@ -1,5 +1,5 @@
 """Tests for falsegreen-robot. Each fixture is a tiny .robot file."""
-from falsegreen_robot.scanner import analyze_file
+from falsegreen_robot.scanner import analyze_file, scan, group_of
 
 
 def codes(tmp_path, body, name="t.robot"):
@@ -171,6 +171,58 @@ Browser Assert
     Get Text    h1    ==    Welcome
 """
     assert codes(tmp_path, body) == set()
+
+
+def test_rpa_task_is_scanned(tmp_path):
+    body = """\
+*** Tasks ***
+Process Invoice
+    Open Application
+    Read Invoice Data
+"""
+    assert "C2b" in codes(tmp_path, body)  # tasks (RPA) are analyzed like test cases
+
+
+def test_d2_control_flow_diagnostic(tmp_path):
+    body = """\
+*** Test Cases ***
+Has Logic
+    Should Be Equal    ${a}    ${b}
+    IF    ${cond}
+        Log    branch
+    END
+"""
+    assert "D2" in codes(tmp_path, body)
+
+
+def test_m2_long_task(tmp_path):
+    steps = "\n".join("    Log    step %d" % i for i in range(12))
+    body = "*** Test Cases ***\nLong\n%s\n    Should Be Equal    ${a}    ${b}\n" % steps
+    assert "M2" in codes(tmp_path, body)
+
+
+def test_groups_by_prefix(tmp_path):
+    assert group_of("C2") == "false-positive"
+    assert group_of("R1") == "false-positive"
+    assert group_of("D2") == "diagnostic"
+    assert group_of("M2") == "coupling"
+
+
+def test_scan_hides_diagnostics_by_default(tmp_path):
+    body = """\
+*** Test Cases ***
+Has Logic
+    Should Be Equal    ${a}    ${b}
+    IF    ${cond}
+        Log    x
+    END
+"""
+    f = tmp_path / "s.robot"
+    f.write_text(body, encoding="utf-8")
+    off = {x.code for x in scan([str(f)])}
+    on = {x.code for x in scan([str(f)], diagnostics=True)}
+    assert "D2" not in off          # diagnostic group off by default
+    assert "D2" in on               # surfaced with --diagnostics
 
 
 def test_custom_verify_keyword_counts_as_oracle(tmp_path):
