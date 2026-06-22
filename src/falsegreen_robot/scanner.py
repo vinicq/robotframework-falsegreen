@@ -35,6 +35,7 @@ CASES = {
     "C16": ("Sleep used as synchronization (result depends on timing)", "low", "J1"),
     "C21": ("verification only runs conditionally (inside IF / Run Keyword If) — it may never execute", "low", "J1"),
     "C32": ("skipped test (robot:skip / Skip) never runs", "low", "J1"),
+    "R1":  ("Pass Execution forces the test to pass regardless of any check (forced green)", "high", "J1"),
 }
 
 def group_of(code):  # one group here; mirrors the sibling tools' API
@@ -109,6 +110,39 @@ def _rkif_verifies(call):
     return False
 
 
+def _try_blocks(node):
+    """Yield native TRY blocks (RF 5+) anywhere in the test body."""
+    for item in getattr(node, "body", None) or []:
+        if type(item).__name__ == "Try" and _norm(getattr(item, "type", "")) == "try":
+            yield item
+        if hasattr(item, "body"):
+            yield from _try_blocks(item)
+
+
+def _except_swallows(try_node):
+    """True if any EXCEPT branch of this TRY swallows the failure: its body has no
+    Fail, no verification keyword, and no re-raise - only logging / no-op / empty."""
+    branch = getattr(try_node, "next", None)
+    while branch is not None:
+        if _norm(getattr(branch, "type", "")) == "except":
+            harmless = True
+            for st in getattr(branch, "body", None) or []:
+                if type(st).__name__ != "KeywordCall":
+                    continue
+                kw = _norm(st.keyword)
+                if kw in ("fail", "fatal error") or "should" in kw or kw.startswith(VERIFY_PREFIXES):
+                    harmless = False
+                    break
+            if harmless:
+                return True
+        branch = getattr(branch, "next", None)
+    return False
+
+
+def _try_body_has_keyword(try_node):
+    return any(type(st).__name__ == "KeywordCall" for st in (getattr(try_node, "body", None) or []))
+
+
 def _tags(testcase):
     tags = []
     for item in getattr(testcase, "body", None) or []:
@@ -145,6 +179,11 @@ def analyze_testcase(file, tc, findings):
         findings.append(Finding(file, line, name, "C32"))
         return
 
+    # R1: Pass Execution at the top level forces the test green regardless of checks
+    if any(_norm(c.keyword) == "pass execution" for c in _top_level_keyword_calls(tc)):
+        findings.append(Finding(file, line, name, "R1"))
+        return
+
     # C2: empty (no keyword calls at all)
     if not calls:
         findings.append(Finding(file, line, name, "C2"))
@@ -171,6 +210,13 @@ def analyze_testcase(file, tc, findings):
             findings.append(Finding(file, ln, name, "C16"))
         if is_verification(kw, args) or _rkif_verifies(c):
             has_verification = True
+
+    # C3: native TRY/EXCEPT whose EXCEPT swallows the failure
+    for tb in _try_blocks(tc):
+        if _try_body_has_keyword(tb) and _except_swallows(tb):
+            findings.append(Finding(file, getattr(tb, "lineno", line), name, "C3",
+                                    "TRY failure is swallowed by EXCEPT"))
+            return
 
     # C3: swallow without an asserted status
     if not has_verification and any(is_swallow(c.keyword) for c in calls):

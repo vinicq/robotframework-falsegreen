@@ -54,6 +54,7 @@ RESTinstance schema keywords, DatabaseLibrary `Row Count Should Be Equal`, custo
 | C16 | low  | `Sleep` used as synchronization (timing dependence) |
 | C21 | low  | verification only runs conditionally (inside `IF` / `Run Keyword If`) — it may never execute |
 | C32 | low  | skipped test (`robot:skip` / `Skip`) |
+| R1  | high | `Pass Execution` forces the test green regardless of any check |
 
 Codes share ids with the sibling scanners where the concept matches (C2/C2b/C3/C5/C7/C16/C32).
 A Browser `Get` keyword with no assertion operator is a plain getter, so a test whose only

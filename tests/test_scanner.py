@@ -117,6 +117,44 @@ Mixed
     assert "C21" not in codes(tmp_path, body)
 
 
+def test_r1_pass_execution_forces_green(tmp_path):
+    body = """\
+*** Test Cases ***
+Forced
+    Pass Execution    skip the real check
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "R1" in codes(tmp_path, body)
+
+
+def test_c3_native_try_except_swallows(tmp_path):
+    body = """\
+*** Test Cases ***
+Swallowed
+    TRY
+        Do Risky Thing
+        Should Be Equal    ${a}    ${b}
+    EXCEPT    AS    ${e}
+        Log    ${e}
+    END
+"""
+    assert "C3" in codes(tmp_path, body)
+
+
+def test_no_c3_when_except_reraises_with_fail(tmp_path):
+    body = """\
+*** Test Cases ***
+Proper
+    TRY
+        Do Risky Thing
+    EXCEPT    AS    ${e}
+        Fail    unexpected: ${e}
+    END
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C3" not in codes(tmp_path, body)
+
+
 def test_browser_get_without_operator_is_no_verification(tmp_path):
     body = """\
 *** Test Cases ***
