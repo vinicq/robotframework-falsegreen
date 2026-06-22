@@ -33,6 +33,7 @@ CASES = {
     "C5":  ("always-true check (Should Be True ${TRUE} / Should Be Equal with equal literals)", "high", "J2"),
     "C7":  ("self-compare (Should Be Equal ${x} ${x})", "high", "J2"),
     "C16": ("Sleep used as synchronization (result depends on timing)", "low", "J1"),
+    "C21": ("verification only runs conditionally (inside IF / Run Keyword If) — it may never execute", "low", "J1"),
     "C32": ("skipped test (robot:skip / Skip) never runs", "low", "J1"),
 }
 
@@ -87,6 +88,25 @@ def _keyword_calls(node):
             yield item
         if hasattr(item, "body"):
             yield from _keyword_calls(item)
+
+
+def _top_level_keyword_calls(testcase):
+    """KeywordCalls directly in the test body (not nested in IF/FOR/TRY/WHILE)."""
+    return [i for i in (getattr(testcase, "body", None) or [])
+            if type(i).__name__ == "KeywordCall"]
+
+
+def _has_control_block(testcase):
+    return any(type(i).__name__ in ("If", "For", "While", "Try")
+               for i in (getattr(testcase, "body", None) or []))
+
+
+def _rkif_verifies(call):
+    """A `Run Keyword If`/`Unless` whose arguments name a verification keyword -
+    that is a conditional verification (may not run)."""
+    if _norm(getattr(call, "keyword", None)) in ("run keyword if", "run keyword unless"):
+        return any("should" in _norm(a) for a in (getattr(call, "args", None) or ()))
+    return False
 
 
 def _tags(testcase):
@@ -149,7 +169,7 @@ def analyze_testcase(file, tc, findings):
         # C16 Sleep
         if _norm(kw) == "sleep":
             findings.append(Finding(file, ln, name, "C16"))
-        if is_verification(kw, args):
+        if is_verification(kw, args) or _rkif_verifies(c):
             has_verification = True
 
     # C3: swallow without an asserted status
@@ -160,6 +180,19 @@ def analyze_testcase(file, tc, findings):
     # C2b: keywords ran but nothing verified
     if not has_verification:
         findings.append(Finding(file, line, name, "C2b"))
+        return
+
+    # C21: a verification exists, but none runs unconditionally — the only
+    # verification lives inside an IF/FOR block or a Run Keyword If. The guide is
+    # explicit: no if/else/for at the test-case level.
+    top = _top_level_keyword_calls(tc)
+    has_unconditional = any(
+        is_verification(c.keyword, list(getattr(c, "args", []) or []))
+        for c in top
+        if _norm(c.keyword) not in ("run keyword if", "run keyword unless")
+    )
+    if not has_unconditional and (_has_control_block(tc) or any(_rkif_verifies(c) for c in calls)):
+        findings.append(Finding(file, line, name, "C21"))
 
 
 def analyze_file(path):

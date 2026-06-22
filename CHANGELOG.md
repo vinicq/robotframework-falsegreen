@@ -14,7 +14,7 @@ All notable changes to this project are documented here. The format is based on
   tests, built on the official `robot.api.get_model` parser (no execution).
 - Detection codes: C2 (empty test), C2b (no verification keyword), C3 (swallowed
   `Run Keyword And Ignore Error`/`Return Status`), C5 (always-true), C7 (self-compare),
-  C16 (`Sleep` as synchronization), C32 (skipped). Codes share ids with the sibling
+  C16 (`Sleep` as synchronization), C21 (conditional-only verification), C32 (skipped). Codes share ids with the sibling
   scanners where the concept matches.
 - Verification-keyword recognition across libraries: the `Should` convention plus
   SeleniumLibrary/AppiumLibrary, Browser's assertion engine (`Get ... == expected`),

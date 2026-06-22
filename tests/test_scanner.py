@@ -84,6 +84,39 @@ Skipped
     assert "C32" in codes(tmp_path, body)
 
 
+def test_c21_verification_only_inside_if(tmp_path):
+    body = """\
+*** Test Cases ***
+Conditional Check
+    Do Something
+    IF    ${ready}
+        Should Be Equal    ${a}    ${b}
+    END
+"""
+    assert "C21" in codes(tmp_path, body)
+
+
+def test_c21_run_keyword_if_verification(tmp_path):
+    body = """\
+*** Test Cases ***
+Guarded
+    Run Keyword If    ${ready}    Should Be Equal    ${a}    ${b}
+"""
+    assert "C21" in codes(tmp_path, body)
+
+
+def test_no_c21_when_an_unconditional_verification_exists(tmp_path):
+    body = """\
+*** Test Cases ***
+Mixed
+    Should Be Equal    ${a}    ${b}
+    IF    ${ready}
+        Should Contain    ${x}    y
+    END
+"""
+    assert "C21" not in codes(tmp_path, body)
+
+
 def test_browser_get_without_operator_is_no_verification(tmp_path):
     body = """\
 *** Test Cases ***

@@ -52,6 +52,7 @@ RESTinstance schema keywords, DatabaseLibrary `Row Count Should Be Equal`, custo
 | C5  | high | always-true (`Should Be True  ${TRUE}`, `Should Be Equal` with equal literals) |
 | C7  | high | self-compare (`Should Be Equal  ${x}  ${x}`) |
 | C16 | low  | `Sleep` used as synchronization (timing dependence) |
+| C21 | low  | verification only runs conditionally (inside `IF` / `Run Keyword If`) — it may never execute |
 | C32 | low  | skipped test (`robot:skip` / `Skip`) |
 
 Codes share ids with the sibling scanners where the concept matches (C2/C2b/C3/C5/C7/C16/C32).
