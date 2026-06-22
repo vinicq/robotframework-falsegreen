@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+falsegreen-robot: deterministic false-positive scanner for Robot Framework tests.
+
+Parses .robot files with the official Robot Framework parser (robot.api.get_model)
+- no execution - and flags test cases that pass green without protecting anything:
+a test with no verification keyword, a swallowed Run Keyword And Ignore Error, an
+always-true Should Be True ${TRUE}, a self-compare, Sleep used as a wait, a skipped
+test. Sibling of falsegreen (Python/pytest) and falsegreen-js (JS/TS).
+
+Output: readable text (default) or JSON (--json).
+Exit: 0 clean, 10 low-confidence only, 20 high-confidence present.
+"""
+import argparse
+import json
+import os
+import sys
+
+__version__ = "0.1.0"
+TOOL_URI = "https://github.com/vinicq/falsegreen-robot"
+
+# --- case catalog. code -> (title, confidence, judgment J1-J6) -------------
+JUDGMENTS = {
+    "J1": "does the verification run?",
+    "J2": "is the oracle independent of the code?",
+    "J4": "does it check enough, and the right thing?",
+}
+CASES = {
+    "C2":  ("empty test case (no keywords run)", "high", "J1"),
+    "C2b": ("runs keywords but no verification keyword (no oracle)", "low", "J1"),
+    "C3":  ("Run Keyword And Ignore Error/Return Status swallows the failure and the status is never asserted", "high", "J1"),
+    "C5":  ("always-true check (Should Be True ${TRUE} / Should Be Equal with equal literals)", "high", "J2"),
+    "C7":  ("self-compare (Should Be Equal ${x} ${x})", "high", "J2"),
+    "C16": ("Sleep used as synchronization (result depends on timing)", "low", "J1"),
+    "C32": ("skipped test (robot:skip / Skip) never runs", "low", "J1"),
+}
+
+def group_of(code):  # one group here; mirrors the sibling tools' API
+    return "false-positive"
+
+# --- verification vocabulary (the oracle), across Robot libraries ----------
+# Dominant convention: the word "Should". Plus library-specific forms.
+REST_SCHEMA = {"Integer", "Number", "String", "Boolean", "Object", "Array", "Null", "Missing"}
+BROWSER_OPS = {"==", "!=", "contains", "not contains", "validate", "matches",
+               ">", "<", ">=", "<=", "*=", "^=", "$=", "then"}
+VERIFY_PREFIXES = ("verify", "assert", "validate", "check ")
+SWALLOW_KEYWORDS = {"run keyword and ignore error", "run keyword and return status"}
+
+
+def _norm(name):
+    return (name or "").strip().lower()
+
+
+def is_verification(keyword, args):
+    """True if this keyword call verifies an expected result (is an oracle)."""
+    if keyword is None:
+        return False
+    n = _norm(keyword)
+    if "should" in n:
+        return True                              # BuiltIn/Collections/String/Selenium/...
+    if keyword in REST_SCHEMA:
+        return True                              # RESTinstance schema assertions
+    if n.startswith(VERIFY_PREFIXES):
+        return True                              # custom Verify*/Assert*/Validate*/Check *
+    if n.startswith("wait until") and any(w in n for w in ("contain", "visible", "present")):
+        return True                              # Selenium/Appium waits that fail on timeout
+    if n.startswith("get ") and any(a in BROWSER_OPS for a in (args or ())):
+        return True                              # Browser assertion engine: Get ... == expected
+    return False
+
+
+def is_swallow(keyword):
+    return _norm(keyword) in SWALLOW_KEYWORDS
+
+
+def _looks_constant_true(arg):
+    return _norm(arg) in ("${true}", "true", "1", "${1}")
+
+
+# --- AST walk over the Robot model -----------------------------------------
+def _keyword_calls(node):
+    """Yield every KeywordCall in a block, descending into IF/FOR/TRY/WHILE."""
+    for item in getattr(node, "body", None) or []:
+        cls = type(item).__name__
+        if cls == "KeywordCall":
+            yield item
+        if hasattr(item, "body"):
+            yield from _keyword_calls(item)
+
+
+def _tags(testcase):
+    tags = []
+    for item in getattr(testcase, "body", None) or []:
+        if type(item).__name__ == "Tags":
+            tags += [str(v) for v in getattr(item, "values", []) or []]
+    return tags
+
+
+class Finding:
+    __slots__ = ("file", "line", "test", "code", "detail")
+
+    def __init__(self, file, line, test, code, detail=""):
+        self.file = file
+        self.line = line
+        self.test = test
+        self.code = code
+        self.detail = detail
+
+    def dict(self):
+        title, conf, judg = CASES[self.code]
+        return {"file": self.file, "line": self.line, "test": self.test,
+                "code": self.code, "confidence": conf, "judgment": judg,
+                "title": title, "detail": self.detail}
+
+
+def analyze_testcase(file, tc, findings):
+    name = getattr(tc, "name", "") or ""
+    line = getattr(tc, "lineno", 0) or 0
+    calls = list(_keyword_calls(tc))
+    tags = [_norm(t) for t in _tags(tc)]
+
+    # C32: skipped
+    if any("robot:skip" in t for t in tags) or any(_norm(c.keyword) in ("skip",) for c in calls):
+        findings.append(Finding(file, line, name, "C32"))
+        return
+
+    # C2: empty (no keyword calls at all)
+    if not calls:
+        findings.append(Finding(file, line, name, "C2"))
+        return
+
+    has_verification = False
+    for c in calls:
+        kw, args = c.keyword, list(getattr(c, "args", []) or [])
+        ln = getattr(c, "lineno", line)
+        # C5 always-true
+        if _norm(kw) == "should be true" and args and _looks_constant_true(args[0]):
+            findings.append(Finding(file, ln, name, "C5", "Should Be True on a constant"))
+            has_verification = True
+            continue
+        if _norm(kw) == "should be equal" and len(args) >= 2:
+            if args[0] == args[1]:
+                # C7 self-compare (same operand) or C5 (equal literals)
+                code = "C7" if args[0].startswith("${") else "C5"
+                findings.append(Finding(file, ln, name, code, "both sides are identical"))
+            has_verification = True
+            continue
+        # C16 Sleep
+        if _norm(kw) == "sleep":
+            findings.append(Finding(file, ln, name, "C16"))
+        if is_verification(kw, args):
+            has_verification = True
+
+    # C3: swallow without an asserted status
+    if not has_verification and any(is_swallow(c.keyword) for c in calls):
+        findings.append(Finding(file, line, name, "C3"))
+        return
+
+    # C2b: keywords ran but nothing verified
+    if not has_verification:
+        findings.append(Finding(file, line, name, "C2b"))
+
+
+def analyze_file(path):
+    findings = []
+    try:
+        from robot.api import get_model
+        from robot.parsing import ModelVisitor
+    except Exception as exc:  # pragma: no cover
+        sys.stderr.write("falsegreen-robot: robotframework is required (%s)\n" % exc)
+        return findings
+    try:
+        model = get_model(path)
+    except Exception:
+        return findings
+    self_findings = findings
+
+    class _V(ModelVisitor):
+        def visit_TestCase(self, node):
+            analyze_testcase(path, node, self_findings)
+
+    _V().visit(model)
+    return findings
+
+
+# --- discovery + CLI -------------------------------------------------------
+IGNORED_DIRS = {".git", ".tox", "venv", ".venv", "node_modules", "results", "output"}
+
+
+def is_robot_file(path):
+    return path.endswith(".robot")
+
+
+def discover(paths):
+    files = []
+    for root in paths:
+        if os.path.isfile(root):
+            if is_robot_file(root):
+                files.append(root)
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
+            for f in filenames:
+                if is_robot_file(f):
+                    files.append(os.path.join(dirpath, f))
+    return sorted(set(files))
+
+
+def scan(paths, disable=None):
+    disable = disable or set()
+    out = []
+    for f in discover(paths):
+        for finding in analyze_file(f):
+            conf = CASES[finding.code][1]
+            if finding.code in disable or conf == "off":
+                continue
+            out.append(finding)
+    return out
+
+
+def _render_text(findings):
+    if not findings:
+        return "falsegreen-robot: no false-positive patterns found."
+    lines, high, low = [], 0, 0
+    by_file = {}
+    for f in findings:
+        by_file.setdefault(f.file, []).append(f)
+    for file, fs in by_file.items():
+        lines.append("\n" + file)
+        for f in sorted(fs, key=lambda x: x.line):
+            title, conf, _ = CASES[f.code]
+            tag = "HIGH" if conf == "high" else "low "
+            high += conf == "high"
+            low += conf == "low"
+            lines.append("  %s %-4s L%-4d %s  %s" % (tag, f.code, f.line, f.test, title))
+            if f.detail:
+                lines.append("           " + f.detail)
+    lines.append("\n%d high, %d low. %s" % (high, low, TOOL_URI))
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="falsegreen-robot",
+                                description="Find false-positive Robot Framework tests (static).")
+    p.add_argument("paths", nargs="*", default=["."], help="files or directories (default: cwd)")
+    p.add_argument("--json", action="store_true", help="JSON output")
+    p.add_argument("--disable", default="", help="comma-separated codes to turn off")
+    p.add_argument("--version", action="version", version=__version__)
+    args = p.parse_args(argv)
+    disable = {c.strip() for c in args.disable.split(",") if c.strip()}
+    findings = scan(args.paths or ["."], disable=disable)
+    if args.json:
+        print(json.dumps({"tool": "falsegreen-robot", "version": __version__,
+                          "judgments": JUDGMENTS,
+                          "findings": [f.dict() for f in findings]}, indent=2))
+    else:
+        print(_render_text(findings))
+    if any(CASES[f.code][1] == "high" for f in findings):
+        return 20
+    if findings:
+        return 10
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
