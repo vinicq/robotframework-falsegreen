@@ -46,7 +46,7 @@ RESTinstance schema keywords, DatabaseLibrary `Row Count Should Be Equal`, custo
 
 | Code | Confidence | What it flags |
 |---|---|---|
-| C2  | high | empty test case (no keywords run) |
+| C2  | high | empty test case, task, or keyword (no keywords run) |
 | C2b | low  | runs keywords but no verification keyword (no oracle) |
 | C3  | high | `Run Keyword And Ignore Error`/`Return Status` swallows the failure, status never asserted |
 | C5  | high | always-true (`Should Be True  ${TRUE}`, `Should Be Equal` with equal literals) |
@@ -54,9 +54,13 @@ RESTinstance schema keywords, DatabaseLibrary `Row Count Should Be Equal`, custo
 | C7  | high | self-compare (`Should Be Equal  ${x}  ${x}`) |
 | C16 | low  | `Sleep` used as synchronization (timing dependence) |
 | C21 | low  | verification only runs conditionally (inside `IF` / `Run Keyword If`) — it may never execute |
+| C23 | low  | hard-coded IP-address URL in test data (`http://10.0.0.5:8080`) — environment coupling |
 | C32 | low  | skipped test (`robot:skip` / `Skip`) |
 | R1  | high | `Pass Execution` forces the test green regardless of any check |
 | R2  | low  | user keyword named like a verifier (`Verify`/`Assert`/`Should`...) but its body verifies nothing — a hollow oracle |
+| R3  | high | `*** Test Cases ***` inside a `.resource` file — invalid; the cases never run |
+| R4  | high | `No Operation` is the only step — the test/task/keyword does nothing |
+| R5  | high | `[Template]` with no data rows — the templated test runs zero cases |
 
 Scans `*** Test Cases ***`, `*** Tasks ***` (RPA), and `*** Keywords ***` definitions in
 both `.robot` and `.resource` files. R2 catches the root cause of a missed C2b: a test
@@ -80,6 +84,25 @@ falsegreen-robot --diagnostics    # include D*/M* as warnings
 Codes share ids with the sibling scanners where the concept matches (C2/C2b/C3/C5/C7/C16/C21/C32).
 A Browser `Get` keyword with no assertion operator is a plain getter, so a test whose only
 step is `Get Text  h1` surfaces as no-verification (C2b).
+
+## Test levels (the pyramid)
+
+falsegreen-robot scans Robot suites at every level of the pyramid. Discovery is
+level-agnostic - it reads any `.robot`/`.resource` - but a few codes are read in light of
+the level, so a valid pattern at one level is not flagged at another.
+
+- **Unit:** keyword logic with the boundaries doubled. The oracle is a `Should` keyword.
+- **Integration (API and database):** API tests through RequestsLibrary and RESTinstance
+  (the schema keywords count as the oracle), database tests through DatabaseLibrary
+  (`Row Count Should Be Equal`, `Check If Exists In Database`). These hit a real endpoint or
+  datastore on purpose, so the request or row IS the verification at that level.
+- **E2E:** the Browser library and SeleniumLibrary/Appium. The page assertion
+  (`Page Should Contain`, `Get Text ... == ...`) is the oracle; the presence of a rendered
+  element is a real check at this level, not a weak one.
+
+A real API or database hit inside a test that claims to be a unit test is itself the smell
+(environment coupling, mystery guest), not the level of the test. C23 flags the strongest
+form: a hard-coded IP-address endpoint.
 
 ## Scope and honesty
 
