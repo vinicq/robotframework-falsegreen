@@ -1,11 +1,22 @@
 """Tests for falsegreen-robot. Each fixture is a tiny .robot file."""
-from falsegreen_robot.scanner import analyze_file, scan, group_of
+import json
+
+from falsegreen_robot.scanner import (
+    analyze_file, scan, group_of, main, resolve_output_path,
+    _render_text, CASES, FIX_HINTS,
+)
 
 
 def codes(tmp_path, body, name="t.robot"):
     f = tmp_path / name
     f.write_text(body, encoding="utf-8")
     return {x.code for x in analyze_file(str(f))}
+
+
+def _findings(tmp_path, body, name="t.robot"):
+    f = tmp_path / name
+    f.write_text(body, encoding="utf-8")
+    return analyze_file(str(f))
 
 
 def test_clean_test_has_no_findings(tmp_path):
@@ -429,3 +440,86 @@ Verifies Each Row
     4    5    9
 """
     assert "C2b" not in codes(tmp_path, body)
+
+
+# --- status report: pyramid level, fix-hint, output dir ----------------------
+
+_EMPTY_TEST = "*** Test Cases ***\nEmpty\n    [Documentation]    nothing\n"
+
+
+def test_level_unit_by_default(tmp_path):
+    fs = _findings(tmp_path, _EMPTY_TEST)
+    assert fs and all(f.level == "unit" for f in fs)
+
+
+def test_level_integration_on_requests_library(tmp_path):
+    body = "*** Settings ***\nLibrary    RequestsLibrary\n" + _EMPTY_TEST
+    fs = _findings(tmp_path, body)
+    assert fs and all(f.level == "integration" for f in fs)
+
+
+def test_level_integration_on_database_library(tmp_path):
+    body = "*** Settings ***\nLibrary    DatabaseLibrary\n" + _EMPTY_TEST
+    fs = _findings(tmp_path, body)
+    assert fs and all(f.level == "integration" for f in fs)
+
+
+def test_level_e2e_on_selenium_library(tmp_path):
+    body = "*** Settings ***\nLibrary    SeleniumLibrary\n" + _EMPTY_TEST
+    fs = _findings(tmp_path, body)
+    assert fs and all(f.level == "e2e" for f in fs)
+
+
+def test_level_e2e_wins_over_integration(tmp_path):
+    body = ("*** Settings ***\nLibrary    RequestsLibrary\nLibrary    Browser\n"
+            + _EMPTY_TEST)
+    fs = _findings(tmp_path, body)
+    assert fs and all(f.level == "e2e" for f in fs)
+
+
+def test_finding_dict_carries_level_and_fix(tmp_path):
+    fs = _findings(tmp_path, _EMPTY_TEST)
+    d = fs[0].dict()
+    assert d["code"] == "C2"
+    assert d["level"] == "unit"
+    assert d["fix"] == FIX_HINTS["C2"]  # the exact remediation, not just truthiness
+
+
+def test_render_text_shows_level_and_fix_and_summary(tmp_path):
+    fs = _findings(tmp_path, _EMPTY_TEST)
+    out = _render_text(fs)
+    assert "level: unit" in out
+    assert "fix:" in out
+    assert "By level: unit:" in out
+    assert "Top fixes:" in out
+
+
+def test_fix_hints_cover_every_case():
+    missing = [c for c in CASES if c not in FIX_HINTS]
+    assert missing == []
+
+
+def test_output_directory_writes_report_file(tmp_path):
+    f = tmp_path / "t.robot"
+    f.write_text(_EMPTY_TEST, encoding="utf-8")
+    outdir = tmp_path / ".falsegreen"
+    main([str(f), "--json", "--output", str(outdir)])
+    report = outdir / "report.json"
+    assert report.exists()
+    doc = json.loads(report.read_text(encoding="utf-8"))
+    assert doc["findings"][0]["code"] == "C2"
+
+
+def test_output_file_path_writes_single_file(tmp_path):
+    f = tmp_path / "t.robot"
+    f.write_text(_EMPTY_TEST, encoding="utf-8")
+    out = tmp_path / "sub" / "report.txt"
+    main([str(f), "--output", str(out)])
+    assert out.is_file()
+
+
+def test_resolve_output_path_dir_vs_file(tmp_path):
+    d = resolve_output_path(str(tmp_path / ".falsegreen"), "json")
+    assert d.endswith("report.json")
+    fpath = resolve_output_path(str(tmp_path / "r.txt"), "text")
+    assert fpath.endswith("r.txt")

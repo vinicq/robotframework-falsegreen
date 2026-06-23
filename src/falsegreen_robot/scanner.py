@@ -62,6 +62,63 @@ def group_of(code):
         return "coupling"
     return "false-positive"
 
+
+# One-line remediation per case: what to change so the test verifies something.
+# Short, imperative, no trailing period. Surfaced in the status report (text +
+# JSON `fix` field). A code missing here renders no fix line, never crashes.
+FIX_HINTS = {
+    "C2":  "add keywords that exercise and verify the behaviour",
+    "C2b": "add a verification keyword (Should..., a library assertion)",
+    "C3":  "assert the returned status, or let the failure propagate",
+    "C5":  "compare against an independent expected value, not a constant",
+    "C6":  "compare the value (Should Be Equal), not just its truthiness",
+    "C7":  "compare against an independent expected value, not the same variable",
+    "C16": "wait for the condition (Wait Until...) instead of Sleep",
+    "C21": "move the verification out of the IF/Run Keyword If so it always runs",
+    "C23": "read the URL from a variable/resource, not a hard-coded IP",
+    "C32": "remove the skip, or document why with a reason",
+    "R1":  "remove Pass Execution; let the checks decide the result",
+    "R2":  "make the verifier keyword actually assert, or rename it",
+    "R3":  "move the test cases to a .robot suite; .resource holds keywords only",
+    "R4":  "replace No Operation with real steps and a verification",
+    "R5":  "add data rows to the [Template], or remove the template",
+    "D2":  "move control flow into a keyword; keep the test case flat",
+    "M2":  "split the long test into focused cases or extract keywords",
+}
+
+# Test-pyramid level by imported library. A browser/mobile driver is E2E; an
+# HTTP client or a database library crosses an I/O boundary, so it is
+# integration; neither leaves the suite at unit level.
+E2E_LIBRARIES = {"seleniumlibrary", "selenium2library", "browser", "appiumlibrary"}
+INTEGRATION_LIBRARIES = {
+    "requestslibrary", "restinstance", "rest", "databaselibrary", "rpa.http",
+}
+
+
+def _collect_libraries(model):
+    """Library names imported in the suite's *** Settings *** section."""
+    libs = []
+    for section in getattr(model, "sections", None) or []:
+        for item in getattr(section, "body", None) or []:
+            if type(item).__name__ == "LibraryImport":
+                nm = getattr(item, "name", "") or ""
+                if nm:
+                    libs.append(nm)
+    return libs
+
+
+def detect_pyramid_level(model):
+    """Map the suite to a pyramid level from its imported libraries: 'e2e' (browser
+    or mobile driver), 'integration' (HTTP client or database library), or 'unit'
+    (neither). Broadest wins. A real API/DB library in a test the author treats as
+    unit is itself the smell, surfaced by the level mismatch."""
+    norm = {_norm(name) for name in _collect_libraries(model)}
+    if norm & E2E_LIBRARIES:
+        return "e2e"
+    if norm & INTEGRATION_LIBRARIES:
+        return "integration"
+    return "unit"
+
 # --- verification vocabulary (the oracle), across Robot libraries ----------
 # Dominant convention: the word "Should". Plus library-specific forms.
 REST_SCHEMA = {"Integer", "Number", "String", "Boolean", "Object", "Array", "Null", "Missing"}
@@ -200,7 +257,7 @@ def _tags(testcase):
 
 
 class Finding:
-    __slots__ = ("file", "line", "test", "code", "detail")
+    __slots__ = ("file", "line", "test", "code", "detail", "level")
 
     def __init__(self, file, line, test, code, detail=""):
         self.file = file
@@ -208,12 +265,14 @@ class Finding:
         self.test = test
         self.code = code
         self.detail = detail
+        self.level = "unit"     # unit | integration | e2e; set per file in analyze_file
 
     def dict(self):
         title, conf, judg = CASES[self.code]
         return {"file": self.file, "line": self.line, "test": self.test,
                 "code": self.code, "confidence": conf, "judgment": judg,
-                "title": title, "detail": self.detail}
+                "title": title, "detail": self.detail, "level": self.level,
+                "fix": FIX_HINTS.get(self.code, "")}
 
 
 def _name_implies_verification(name):
@@ -409,6 +468,9 @@ def analyze_file(path):
             analyze_keyword(path, node, self_findings)
 
     _V().visit(model)
+    level = detect_pyramid_level(model)
+    for f in findings:
+        f.level = level
     return findings
 
 
@@ -473,8 +535,46 @@ def _render_text(findings):
             lines.append("  %s %-4s L%-4d %s  %s" % (tag, f.code, f.line, f.test, title))
             if f.detail:
                 lines.append("           " + f.detail)
+            hint = FIX_HINTS.get(f.code, "")
+            lines.append("           level: %s%s" % (
+                f.level, ("   fix: " + hint) if hint else ""))
     lines.append("\n%d high, %d low. %s" % (high, low, TOOL_URI))
+
+    # Test-pyramid breakdown + the most common fixes, over every finding shown.
+    by_level, by_code = {}, {}
+    for f in findings:
+        by_level[f.level] = by_level.get(f.level, 0) + 1
+        by_code[f.code] = by_code.get(f.code, 0) + 1
+    order = ["unit", "integration", "e2e"]
+    levels = [lv for lv in order if lv in by_level] + \
+             [lv for lv in sorted(by_level) if lv not in order]
+    lines.append("By level: " + ", ".join("%s:%d" % (lv, by_level[lv]) for lv in levels))
+    top = sorted(by_code.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+    lines.append("Top fixes:")
+    for code, n in top:
+        lines.append("  %s (%d): %s" % (code, n, FIX_HINTS.get(code, CASES[code][0])))
     return "\n".join(lines)
+
+
+_OUTPUT_EXT = {"text": "txt", "json": "json"}
+
+
+def resolve_output_path(path, fmt):
+    """Turn --output into a concrete file path. A directory (existing dir, a
+    trailing separator, or an extension-less name like '.falsegreen') receives
+    'report.<ext>' for the chosen format; anything else is treated as a file.
+    Missing parent directories are created either way."""
+    ext = _OUTPUT_EXT.get(fmt, "txt")
+    base = os.path.basename(path.rstrip("/\\"))
+    is_dir = (path.endswith(("/", "\\")) or os.path.isdir(path)
+              or os.path.splitext(base)[1] == "")
+    if is_dir:
+        os.makedirs(path, exist_ok=True)
+        return os.path.join(path, "report." + ext)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    return path
 
 
 def main(argv=None):
@@ -482,6 +582,9 @@ def main(argv=None):
                                 description="Find false-positive Robot Framework tests (static).")
     p.add_argument("paths", nargs="*", default=["."], help="files or directories (default: cwd)")
     p.add_argument("--json", action="store_true", help="JSON output")
+    p.add_argument("--output", default=None, metavar="PATH",
+                   help="write the output to PATH instead of stdout; "
+                        "a directory (e.g. .falsegreen/) gets report.<ext>")
     p.add_argument("--disable", default="", help="comma-separated codes to turn off")
     p.add_argument("--diagnostics", action="store_true",
                    help="also report the opt-in maintainability group (D*/M*)")
@@ -490,11 +593,17 @@ def main(argv=None):
     disable = {c.strip() for c in args.disable.split(",") if c.strip()}
     findings = scan(args.paths or ["."], disable=disable, diagnostics=args.diagnostics)
     if args.json:
-        print(json.dumps({"tool": "falsegreen-robot", "version": __version__,
-                          "judgments": JUDGMENTS,
-                          "findings": [f.dict() for f in findings]}, indent=2))
+        rendered = json.dumps({"tool": "falsegreen-robot", "version": __version__,
+                               "judgments": JUDGMENTS,
+                               "findings": [f.dict() for f in findings]}, indent=2)
     else:
-        print(_render_text(findings))
+        rendered = _render_text(findings)
+    if args.output:
+        dest = resolve_output_path(args.output, "json" if args.json else "text")
+        with open(dest, "w", encoding="utf-8") as fh:
+            fh.write(rendered + "\n")
+    else:
+        print(rendered)
     if any(_eff_conf(f.code) == "high" for f in findings):
         return 20
     if findings:

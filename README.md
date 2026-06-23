@@ -30,8 +30,12 @@ pip install falsegreen-robot
 falsegreen-robot                  # scan cwd
 falsegreen-robot tests/           # scan a path
 falsegreen-robot --json           # machine-readable output
+falsegreen-robot --output report.json   # write to a file
+falsegreen-robot --output .falsegreen/  # write report.<ext> into a directory
 falsegreen-robot --disable C16    # turn off specific codes
 ```
+
+Each finding is reported with its pyramid level (unit / integration / e2e, read from the suite's imported libraries) and a one-line fix hint, and the summary breaks the findings down by level and lists the most common fixes. `--output` takes a file or a directory: an extension-less or trailing-slash path (e.g. `.falsegreen/`) receives `report.<ext>` for the chosen format. Reports are run artifacts; keep the output directory gitignored.
 
 Exit code: `0` clean, `10` low-confidence only, `20` high-confidence present. Wire exit
 `20` into CI to block the merge.

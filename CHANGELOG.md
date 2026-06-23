@@ -14,6 +14,13 @@ All notable changes to this project are documented here. The format is based on
   to IP literals so hostname URLs common in E2E are not flagged.
 - Documented test-pyramid coverage: unit, integration (API and database), and E2E. The
   scanner is level-agnostic; some codes are interpreted per level to keep precision.
+- Status report output: every finding now carries its pyramid level (unit / integration /
+  e2e, detected from the suite's imported libraries: SeleniumLibrary/Browser/AppiumLibrary
+  are e2e, RequestsLibrary/RESTinstance/DatabaseLibrary are integration) and a one-line fix
+  hint. The text summary adds a per-level breakdown and the top fixes by frequency; JSON
+  gains `level` and `fix` fields.
+- `--output` flag: write to a file, or pass a directory (e.g. `.falsegreen/`) to get
+  `report.<ext>` for the chosen format. Parent directories are created as needed.
 
 ## [0.1.0] - 2026-06-22
 
