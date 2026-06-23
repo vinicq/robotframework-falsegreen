@@ -1,4 +1,4 @@
-# Releasing falsegreen-robot
+# Releasing robotframework-falsegreen
 
 Publishing to PyPI uses Trusted Publishing (OIDC) through `.github/workflows/release.yml`.
 No long-lived API token lives in the repo: the publish job proves its identity to PyPI
@@ -9,10 +9,10 @@ with a short-lived OIDC credential.
 ### 1. PyPI Trusted Publisher
 
 On pypi.org, under the project's Publishing settings (or as a pending publisher for a name
-that does not exist yet), add a GitHub trusted publisher for `falsegreen-robot`:
+that does not exist yet), add a GitHub trusted publisher for `robotframework-falsegreen`:
 
 - GitHub owner: `vinicq`
-- Repository: `falsegreen-robot`
+- Repository: `robotframework-falsegreen`
 - Workflow: `release.yml`
 - Environment: `pypi`
 
@@ -33,14 +33,14 @@ No secret is required when trusted publishing is configured.
    `python -m falsegreen_robot src tests`. The self-scan must report no HIGH findings
    before tagging.
 4. Commit: `git add -A && git commit -m "release: X.Y.Z"`.
-5. Tag and push: `git tag -a vX.Y.Z -m "falsegreen-robot vX.Y.Z" && git push origin main --tags`.
+5. Tag and push: `git tag -a vX.Y.Z -m "robotframework-falsegreen vX.Y.Z" && git push origin main --tags`.
 6. Create the GitHub release: `gh release create vX.Y.Z --generate-notes`. Publishing the
    release fires `release.yml`, which builds the sdist and wheel and publishes to PyPI.
 
 The workflow is idempotent: if the version is already on PyPI, the publish step skips
 instead of failing.
 
-Confirm it is live: <https://pypi.org/project/falsegreen-robot/>
+Confirm it is live: <https://pypi.org/project/robotframework-falsegreen/>
 
 ## Version scheme
 

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "falsegreen-robot"
+name = "robotframework-falsegreen"
 version = "0.1.0"
 description = "Find Robot Framework tests that pass green without protecting anything: tests with no verification keyword, swallowed failures, always-true checks. Deterministic static scan, sibling of falsegreen (Python) and falsegreen-js (JS/TS)."
 readme = "README.md"
@@ -15,6 +15,7 @@ keywords = ["robot-framework", "robotframework", "testing", "test-smells", "fals
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: Robot Framework",
+    "Framework :: Robot Framework :: Tool",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Topic :: Software Development :: Quality Assurance",
@@ -26,11 +27,15 @@ dependencies = ["robotframework>=4.0"]
 dev = ["pytest>=7", "ruff>=0.5"]
 
 [project.urls]
-Homepage = "https://github.com/vinicq/falsegreen-robot"
-Issues = "https://github.com/vinicq/falsegreen-robot/issues"
+Homepage = "https://github.com/vinicq/robotframework-falsegreen"
+Issues = "https://github.com/vinicq/robotframework-falsegreen/issues"
 
 [project.scripts]
-falsegreen-robot = "falsegreen_robot.scanner:main"
+# Package and repo carry the ecosystem prefix (robotframework-falsegreen); the
+# command is short, mirroring rfbrowser (rf = Robot Framework). The import
+# package stays falsegreen_robot, the same way robotframework-seleniumlibrary
+# imports as SeleniumLibrary.
+rffalsegreen = "falsegreen_robot.scanner:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/falsegreen_robot"]

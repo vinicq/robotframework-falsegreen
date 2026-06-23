@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-falsegreen-robot: deterministic false-positive scanner for Robot Framework tests.
+robotframework-falsegreen: deterministic false-positive scanner for Robot Framework tests.
 
 Parses .robot files with the official Robot Framework parser (robot.api.get_model)
 - no execution - and flags test cases that pass green without protecting anything:
@@ -19,7 +19,7 @@ import re
 import sys
 
 __version__ = "0.1.0"
-TOOL_URI = "https://github.com/vinicq/falsegreen-robot"
+TOOL_URI = "https://github.com/vinicq/robotframework-falsegreen"
 
 # --- case catalog. code -> (title, confidence, judgment J1-J6) -------------
 JUDGMENTS = {
@@ -434,7 +434,7 @@ def analyze_file(path):
         from robot.api import get_model
         from robot.parsing import ModelVisitor
     except Exception as exc:  # pragma: no cover
-        sys.stderr.write("falsegreen-robot: robotframework is required (%s)\n" % exc)
+        sys.stderr.write("rffalsegreen: robotframework is required (%s)\n" % exc)
         return findings
     try:
         model = get_model(path)
@@ -519,7 +519,7 @@ def scan(paths, disable=None, diagnostics=False):
 
 def _render_text(findings):
     if not findings:
-        return "falsegreen-robot: no false-positive patterns found."
+        return "rffalsegreen: no false-positive patterns found."
     lines, high, low = [], 0, 0
     by_file = {}
     for f in findings:
@@ -578,7 +578,7 @@ def resolve_output_path(path, fmt):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="falsegreen-robot",
+    p = argparse.ArgumentParser(prog="rffalsegreen",
                                 description="Find false-positive Robot Framework tests (static).")
     p.add_argument("paths", nargs="*", default=["."], help="files or directories (default: cwd)")
     p.add_argument("--json", action="store_true", help="JSON output")
@@ -593,7 +593,7 @@ def main(argv=None):
     disable = {c.strip() for c in args.disable.split(",") if c.strip()}
     findings = scan(args.paths or ["."], disable=disable, diagnostics=args.diagnostics)
     if args.json:
-        rendered = json.dumps({"tool": "falsegreen-robot", "version": __version__,
+        rendered = json.dumps({"tool": "robotframework-falsegreen", "version": __version__,
                                "judgments": JUDGMENTS,
                                "findings": [f.dict() for f in findings]}, indent=2)
     else:

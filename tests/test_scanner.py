@@ -1,4 +1,4 @@
-"""Tests for falsegreen-robot. Each fixture is a tiny .robot file."""
+"""Tests for robotframework-falsegreen. Each fixture is a tiny .robot file."""
 import json
 
 from falsegreen_robot.scanner import (

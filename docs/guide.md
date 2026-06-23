@@ -1,4 +1,4 @@
-# falsegreen-robot guide
+# robotframework-falsegreen guide
 
 One question per test: **is there a way for the behavior to be wrong and this test to stay
 green?** If yes, the test is not protecting what it claims. This guide explains each code
