@@ -231,6 +231,13 @@ def _call_level_smells(file, owner, calls, findings):
     for c in calls:
         kw, args = c.keyword, list(getattr(c, "args", []) or [])
         ln = getattr(c, "lineno", 0) or 0
+        # C23 runs first: a hard-coded IP URL can sit in the arguments of a
+        # verification keyword (Should Be Equal ${url} http://10.0.0.5:8080),
+        # and the assertion branches below `continue` before reaching it.
+        for a in args:
+            if _IP_URL_RE.search(a or ""):
+                findings.append(Finding(file, ln, owner, "C23", "hard-coded IP-address URL"))
+                break
         if _norm(kw) == "should be true" and args and _looks_constant_true(args[0]):
             findings.append(Finding(file, ln, owner, "C5", "Should Be True on a constant"))
             has_verification = True
@@ -247,10 +254,6 @@ def _call_level_smells(file, owner, calls, findings):
             continue
         if _norm(kw) == "sleep":
             findings.append(Finding(file, ln, owner, "C16"))
-        for a in args:
-            if _IP_URL_RE.search(a or ""):
-                findings.append(Finding(file, ln, owner, "C23", "hard-coded IP-address URL"))
-                break
         if is_verification(kw, args) or _rkif_verifies(c):
             has_verification = True
     return has_verification
@@ -296,9 +299,21 @@ def analyze_testcase(file, tc, findings):
     # TemplateArguments, not keyword calls, so this is checked before the
     # call-based logic below.
     body_items = getattr(tc, "body", None) or []
-    if any(type(i).__name__ == "Template" for i in body_items):
+    template = next((i for i in body_items if type(i).__name__ == "Template"), None)
+    if template is not None:
         if not any(type(i).__name__ == "TemplateArguments" for i in body_items):
             findings.append(Finding(file, line, name, "R5"))
+            return
+        # Populated template: the [Template] keyword is the oracle for every data
+        # row. When it is a known non-verifying builtin (e.g. [Template] Log), each
+        # generated case runs without verifying anything - false-green (C2b).
+        tmpl_kw = _norm(getattr(template, "value", None) or getattr(template, "name", None) or "")
+        non_verifying = {"log", "log to console", "no operation", "sleep", "comment",
+                         "set variable", "set test variable", "set suite variable",
+                         "set global variable"}
+        if tmpl_kw in non_verifying:
+            findings.append(Finding(file, line, name, "C2b",
+                                    "templated test's keyword does not verify anything"))
         return
 
     # R1: Pass Execution at the top level forces the test green regardless of checks

@@ -396,3 +396,36 @@ Hits A Hostname
     Should Be Equal    ${a}    ${b}
 """
     assert "C23" not in codes(tmp_path, body)
+
+
+# --- Codex review fixes ------------------------------------------------------
+
+def test_c23_ip_url_inside_assertion_args(tmp_path):
+    body = """\
+*** Test Cases ***
+Asserts Against A Fixed Host
+    Should Be Equal    ${url}    http://10.0.0.5:8080
+"""
+    assert "C23" in codes(tmp_path, body)
+
+
+def test_c2b_populated_template_with_non_verifying_keyword(tmp_path):
+    body = """\
+*** Test Cases ***
+Logs Each Row
+    [Template]    Log
+    first
+    second
+"""
+    assert "C2b" in codes(tmp_path, body)
+
+
+def test_no_c2b_populated_template_with_verifying_keyword(tmp_path):
+    body = """\
+*** Test Cases ***
+Verifies Each Row
+    [Template]    Verify Addition
+    1    2    3
+    4    5    9
+"""
+    assert "C2b" not in codes(tmp_path, body)
