@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- New codes: R3 (`*** Test Cases ***` inside a `.resource` file), R4 (`No Operation` as the
+  only step), R5 (`[Template]` with no data rows). C2 now also flags an empty user keyword
+  (only settings, no steps). C23 (low): a hard-coded IP-address URL in test data, restricted
+  to IP literals so hostname URLs common in E2E are not flagged.
+- Documented test-pyramid coverage: unit, integration (API and database), and E2E. The
+  scanner is level-agnostic; some codes are interpreted per level to keep precision.
+
 ## [0.1.0] - 2026-06-22
 
 ### Added

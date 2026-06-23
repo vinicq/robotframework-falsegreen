@@ -29,17 +29,21 @@ JUDGMENTS = {
     "J5": "is it coupled / hard to maintain?",
 }
 CASES = {
-    "C2":  ("empty test case (no keywords run)", "high", "J1"),
+    "C2":  ("empty test case, task, or keyword (no keywords run)", "high", "J1"),
     "C2b": ("runs keywords but no verification keyword (no oracle)", "low", "J1"),
     "C3":  ("Run Keyword And Ignore Error/Return Status swallows the failure and the status is never asserted", "high", "J1"),
     "C5":  ("always-true check (Should Be True ${TRUE} / Should Be Equal with equal literals)", "high", "J2"),
     "C6":  ("weak check — Should Be True on a bare variable (truthiness only, not a comparison)", "low", "J4"),
     "C7":  ("self-compare (Should Be Equal ${x} ${x})", "high", "J2"),
     "C16": ("Sleep used as synchronization (result depends on timing)", "low", "J1"),
+    "C23": ("hard-coded IP-address URL in test data (environment coupling / mystery guest)", "low", "J6"),
     "C21": ("verification only runs conditionally (inside IF / Run Keyword If) — it may never execute", "low", "J1"),
     "C32": ("skipped test (robot:skip / Skip) never runs", "low", "J1"),
     "R1":  ("Pass Execution forces the test to pass regardless of any check (forced green)", "high", "J1"),
     "R2":  ("user keyword named like a verifier (Verify/Assert/Should...) but its body contains no verification — a hollow oracle", "low", "J1"),
+    "R3":  ("*** Test Cases *** section inside a .resource file — invalid; the cases never run", "high", "J1"),
+    "R4":  ("No Operation is the only step — the test/task/keyword does nothing", "high", "J1"),
+    "R5":  ("[Template] with no data rows — the templated test is generated with zero cases", "high", "J1"),
     # --- diagnostic group (maintainability; default off, opt-in via --diagnostics) ---
     "D2":  ("control flow (IF/FOR/WHILE/TRY) at the test/task level — the guide advises against it", "off", "J4"),
     # --- coupling group (structure; default off, opt-in) ----------------------
@@ -98,12 +102,30 @@ def _looks_constant_true(arg):
 
 
 _BARE_VAR_RE = re.compile(r"^[\$@&]\{[^{}]+\}$")
+# A URL whose host is a literal IP address: strong signal of environment coupling
+# (the test points at a fixed machine). A hostname URL is too common in E2E to flag.
+_IP_URL_RE = re.compile(r"https?://\d{1,3}(?:\.\d{1,3}){3}\b")
+# Body item types that actually do something (vs. settings like [Documentation]).
+_EXECUTABLE_TYPES = {"KeywordCall", "If", "For", "While", "Try", "Var",
+                     "ReturnStatement", "Return", "TemplateArguments"}
 
 
 def _is_bare_variable(arg):
     """True for a lone variable like ${x} (no comparison/expression) — a weak oracle
     when passed to Should Be True (truthiness only)."""
     return bool(_BARE_VAR_RE.match((arg or "").strip()))
+
+
+def _body_has_executable(node):
+    """True if the body has any item that runs (a keyword call, a control block, a
+    variable assignment, a return, or template data) — not only settings."""
+    return any(type(i).__name__ in _EXECUTABLE_TYPES
+               for i in (getattr(node, "body", None) or []))
+
+
+def _only_no_operation(calls):
+    """True if there is at least one call and every one is `No Operation`."""
+    return bool(calls) and all(_norm(c.keyword) == "no operation" for c in calls)
 
 
 # --- AST walk over the Robot model -----------------------------------------
@@ -225,6 +247,10 @@ def _call_level_smells(file, owner, calls, findings):
             continue
         if _norm(kw) == "sleep":
             findings.append(Finding(file, ln, owner, "C16"))
+        for a in args:
+            if _IP_URL_RE.search(a or ""):
+                findings.append(Finding(file, ln, owner, "C23", "hard-coded IP-address URL"))
+                break
         if is_verification(kw, args) or _rkif_verifies(c):
             has_verification = True
     return has_verification
@@ -237,6 +263,18 @@ def analyze_keyword(file, kw, findings):
     name = getattr(kw, "name", "") or ""
     line = getattr(kw, "lineno", 0) or 0
     calls = list(_keyword_calls(kw))
+
+    # C2: empty keyword (only settings, no steps). A do-nothing keyword called
+    # where verification should happen leaves the test green for free.
+    if not _body_has_executable(kw):
+        findings.append(Finding(file, line, name, "C2", "empty keyword"))
+        return
+
+    # R4: the only step(s) are No Operation — the keyword does nothing.
+    if _only_no_operation(calls):
+        findings.append(Finding(file, line, name, "R4"))
+        return
+
     has_verification = _call_level_smells(file, name, calls, findings)
     if _name_implies_verification(name) and not has_verification:
         findings.append(Finding(file, line, name, "R2"))
@@ -253,6 +291,16 @@ def analyze_testcase(file, tc, findings):
         findings.append(Finding(file, line, name, "C32"))
         return
 
+    # R5: a templated test ([Template] keyword) is driven by data rows. With no
+    # data rows it generates zero cases and never runs. Templated tests carry
+    # TemplateArguments, not keyword calls, so this is checked before the
+    # call-based logic below.
+    body_items = getattr(tc, "body", None) or []
+    if any(type(i).__name__ == "Template" for i in body_items):
+        if not any(type(i).__name__ == "TemplateArguments" for i in body_items):
+            findings.append(Finding(file, line, name, "R5"))
+        return
+
     # R1: Pass Execution at the top level forces the test green regardless of checks
     if any(_norm(c.keyword) == "pass execution" for c in _top_level_keyword_calls(tc)):
         findings.append(Finding(file, line, name, "R1"))
@@ -261,6 +309,11 @@ def analyze_testcase(file, tc, findings):
     # C2: empty (no keyword calls at all)
     if not calls:
         findings.append(Finding(file, line, name, "C2"))
+        return
+
+    # R4: the only step(s) are No Operation — the test runs but does nothing.
+    if _only_no_operation(calls):
+        findings.append(Finding(file, line, name, "R4"))
         return
 
     has_verification = _call_level_smells(file, name, calls, findings)
@@ -314,13 +367,28 @@ def analyze_file(path):
     except Exception:
         return findings
     self_findings = findings
+    is_resource = path.endswith(".resource")
+
+    # R3: a .resource file holds keywords/variables for reuse; a *** Test Cases ***
+    # section there is invalid and its cases never run. Flag the section once and
+    # skip per-test analysis for the file (the keywords are still analyzed).
+    if is_resource:
+        for section in getattr(model, "sections", None) or []:
+            if type(section).__name__ == "TestCaseSection":
+                ln = getattr(getattr(section, "header", None), "lineno", 0) \
+                    or getattr(section, "lineno", 0) or 1
+                self_findings.append(Finding(path, ln, "", "R3",
+                                             "Test Cases section is not allowed in a .resource file"))
+                break
 
     class _V(ModelVisitor):
         def visit_TestCase(self, node):
-            analyze_testcase(path, node, self_findings)
+            if not is_resource:
+                analyze_testcase(path, node, self_findings)
 
         def visit_Task(self, node):  # RPA suites use *** Tasks ***, not *** Test Cases ***
-            analyze_testcase(path, node, self_findings)
+            if not is_resource:
+                analyze_testcase(path, node, self_findings)
 
         def visit_Keyword(self, node):  # user keyword defs in .robot Keywords + .resource
             analyze_keyword(path, node, self_findings)

@@ -299,3 +299,100 @@ Delegates
     Verify Dashboard Loaded
 """
     assert "C2b" not in codes(tmp_path, body)
+
+
+# --- R3/R4/R5, empty keyword, C23: codes from the consolidated catalog ------
+
+def test_r3_test_cases_in_resource_file(tmp_path):
+    body = """\
+*** Test Cases ***
+Should Not Be Here
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "R3" in codes(tmp_path, body, name="keywords.resource")
+
+
+def test_no_r3_for_keywords_in_resource(tmp_path):
+    body = """\
+*** Keywords ***
+Do A Thing
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "R3" not in codes(tmp_path, body, name="keywords.resource")
+
+
+def test_r4_no_operation_only_step(tmp_path):
+    body = """\
+*** Test Cases ***
+Does Nothing
+    No Operation
+"""
+    assert "R4" in codes(tmp_path, body)
+
+
+def test_no_r4_when_real_steps_exist(tmp_path):
+    body = """\
+*** Test Cases ***
+Real
+    No Operation
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "R4" not in codes(tmp_path, body)
+
+
+def test_r5_template_without_data_rows(tmp_path):
+    body = """\
+*** Test Cases ***
+Templated No Data
+    [Template]    Verify Addition
+"""
+    assert "R5" in codes(tmp_path, body)
+
+
+def test_no_r5_when_template_has_data(tmp_path):
+    body = """\
+*** Test Cases ***
+Templated With Data
+    [Template]    Verify Addition
+    1    2    3
+    4    5    9
+"""
+    assert "R5" not in codes(tmp_path, body)
+
+
+def test_c2_empty_keyword(tmp_path):
+    body = """\
+*** Keywords ***
+Placeholder
+    [Documentation]    not implemented yet
+"""
+    assert "C2" in codes(tmp_path, body, name="kw.resource")
+
+
+def test_no_c2_for_keyword_with_steps(tmp_path):
+    body = """\
+*** Keywords ***
+Real Keyword
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C2" not in codes(tmp_path, body, name="kw.resource")
+
+
+def test_c23_hardcoded_ip_url(tmp_path):
+    body = """\
+*** Test Cases ***
+Hits A Fixed Host
+    Open Browser    http://10.0.0.5:8080
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C23" in codes(tmp_path, body)
+
+
+def test_no_c23_for_hostname_url(tmp_path):
+    body = """\
+*** Test Cases ***
+Hits A Hostname
+    Open Browser    http://localhost:8080
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C23" not in codes(tmp_path, body)
