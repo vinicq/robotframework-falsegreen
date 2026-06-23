@@ -1,6 +1,6 @@
 # References
 
-falsegreen-robot detects false-green test smells in Robot Framework. Its catalog draws on
+robotframework-falsegreen detects false-green test smells in Robot Framework. Its catalog draws on
 the academic test-smell literature, on the Robot Framework documentation that defines what
 a verification keyword is, and on the existing Robot linter. This file credits those
 sources and maps each to the codes it informs.
@@ -37,7 +37,7 @@ sources and maps each to the codes it informs.
 
 - **Robocop** (MarketSquare/robotframework-robocop). The Robot Framework linter for style,
   naming, and convention. Complementary, not a competitor: Robocop checks how the code
-  reads; falsegreen-robot checks whether a passing test can still fail. The boundary
+  reads; robotframework-falsegreen checks whether a passing test can still fail. The boundary
   between the two is the scope line in CONTRIBUTING.
 
 ## Code-to-source map

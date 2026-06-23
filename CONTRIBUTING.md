@@ -1,6 +1,6 @@
-# Contributing to falsegreen-robot
+# Contributing to robotframework-falsegreen
 
-Thanks for helping. falsegreen-robot has one job: flag Robot Framework tests that pass
+Thanks for helping. robotframework-falsegreen has one job: flag Robot Framework tests that pass
 green without protecting anything. Keep contributions inside that scope.
 
 ## Scope
@@ -11,7 +11,7 @@ always-true `Should Be True ${TRUE}`, `Pass Execution`, a verification reachable
 through an `IF`. Out of scope: style, naming, length, and convention, unless they make a
 passing test unable to fail. Those belong to [Robocop](https://github.com/MarketSquare/robotframework-robocop),
 which is complementary, not a competitor. When in doubt, ask: *is there a way for the code
-to be wrong and this test to stay green?* If no, it is not a falsegreen-robot code.
+to be wrong and this test to stay green?* If no, it is not a robotframework-falsegreen code.
 
 ## Setup
 

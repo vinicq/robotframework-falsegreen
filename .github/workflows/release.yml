@@ -5,7 +5,7 @@ name: release
 # Fires on a published GitHub release, or manually for an existing tag.
 #
 # One-time setup (see RELEASE notes): on PyPI add a Trusted Publisher for project
-# `falsegreen-robot` (owner vinicq, repo falsegreen-robot, workflow release.yml,
+# `robotframework-falsegreen` (owner vinicq, repo robotframework-falsegreen, workflow release.yml,
 # environment pypi); create a GitHub environment named `pypi`.
 
 on:

@@ -1,6 +1,6 @@
 # Architecture
 
-falsegreen-robot is a deterministic static scanner for Robot Framework tests. It reads
+robotframework-falsegreen is a deterministic static scanner for Robot Framework tests. It reads
 `.robot` and `.resource` files, parses them with the official Robot Framework parser, and
 flags the patterns that let a test pass green without protecting anything. It never imports
 keyword libraries, starts a browser, or runs the suite.

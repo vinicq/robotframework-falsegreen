@@ -5,7 +5,7 @@ maintainer privately and what to expect.
 
 ## Which versions get fixes
 
-falsegreen-robot is in its first development cycle. Security fixes land on the latest
+robotframework-falsegreen is in its first development cycle. Security fixes land on the latest
 commit on `main`. There is no long-term support branch yet.
 
 | Version | Supported |
@@ -29,8 +29,8 @@ reaches us through `get_model`. If the issue is in the parser, report it upstrea
 
 Do **not** open a public GitHub issue for security problems. Use a private channel:
 
-- **GitHub Security Advisories (preferred):** <https://github.com/vinicq/falsegreen-robot/security/advisories/new>
-- **Email:** `vinicq@gmail.com` with the subject prefix `[falsegreen-robot security]`.
+- **GitHub Security Advisories (preferred):** <https://github.com/vinicq/robotframework-falsegreen/security/advisories/new>
+- **Email:** `vinicq@gmail.com` with the subject prefix `[robotframework-falsegreen security]`.
 
 Include a short description and impact, steps to reproduce (ideally a minimal `.robot`
 file), the commit SHA or version tested, and whether it has been disclosed elsewhere.

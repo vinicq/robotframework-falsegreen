@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Renamed to `robotframework-falsegreen`** to fit the Robot Framework ecosystem. The PyPI
+  package and the GitHub repo are now `robotframework-falsegreen` (the `robotframework-`
+  prefix convention), and the package carries the `Framework :: Robot Framework :: Tool`
+  classifier. The CLI command is `rffalsegreen` (short, mirroring `rfbrowser`); the import
+  package stays `falsegreen_robot`. Pre-release, so there is no PyPI migration; the old
+  GitHub URL redirects.
+
 ### Added
 
 - New codes: R3 (`*** Test Cases ***` inside a `.resource` file), R4 (`No Operation` as the
@@ -46,5 +55,5 @@ All notable changes to this project are documented here. The format is based on
   `Verify*`/`Assert*`/`Validate*`/`Check *` keywords.
 - CLI: paths, `--json`, `--disable`, `--version`. Exit codes 0/10/20.
 
-[Unreleased]: https://github.com/vinicq/falsegreen-robot/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/vinicq/falsegreen-robot/releases/tag/v0.1.0
+[Unreleased]: https://github.com/vinicq/robotframework-falsegreen/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/vinicq/robotframework-falsegreen/releases/tag/v0.1.0

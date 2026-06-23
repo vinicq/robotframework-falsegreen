@@ -1,6 +1,6 @@
-# falsegreen-robot
+# robotframework-falsegreen
 
-**One problem, one tool: the false positive.** falsegreen-robot finds Robot Framework
+**One problem, one tool: the false positive.** robotframework-falsegreen finds Robot Framework
 tests that pass green without protecting anything - tests that let broken behavior
 through because no keyword verifies anything, the failure is swallowed, the check is
 always true, or the test is skipped.
@@ -21,18 +21,18 @@ prove, before they reach review.
 ## Install
 
 ```bash
-pip install falsegreen-robot
+pip install robotframework-falsegreen
 ```
 
 ## Usage
 
 ```bash
-falsegreen-robot                  # scan cwd
-falsegreen-robot tests/           # scan a path
-falsegreen-robot --json           # machine-readable output
-falsegreen-robot --output report.json   # write to a file
-falsegreen-robot --output .falsegreen/  # write report.<ext> into a directory
-falsegreen-robot --disable C16    # turn off specific codes
+rffalsegreen                  # scan cwd
+rffalsegreen tests/           # scan a path
+rffalsegreen --json           # machine-readable output
+rffalsegreen --output report.json   # write to a file
+rffalsegreen --output .falsegreen/  # write report.<ext> into a directory
+rffalsegreen --disable C16    # turn off specific codes
 ```
 
 Each finding is reported with its pyramid level (unit / integration / e2e, read from the suite's imported libraries) and a one-line fix hint, and the summary breaks the findings down by level and lists the most common fixes. `--output` takes a file or a directory: an extension-less or trailing-slash path (e.g. `.falsegreen/`) receives `report.<ext>` for the chosen format. Reports are run artifacts; keep the output directory gitignored.
@@ -82,7 +82,7 @@ Three groups, mirroring `falsegreen` and `falsegreen-js`: `false-positive` (C*/R
 | M2 | coupling | test/task with too many steps (guide suggests max ~10) |
 
 ```bash
-falsegreen-robot --diagnostics    # include D*/M* as warnings
+rffalsegreen --diagnostics    # include D*/M* as warnings
 ```
 
 Codes share ids with the sibling scanners where the concept matches (C2/C2b/C3/C5/C7/C16/C21/C32).
@@ -91,7 +91,7 @@ step is `Get Text  h1` surfaces as no-verification (C2b).
 
 ## Test levels (the pyramid)
 
-falsegreen-robot scans Robot suites at every level of the pyramid. Discovery is
+rffalsegreen scans Robot suites at every level of the pyramid. Discovery is
 level-agnostic - it reads any `.robot`/`.resource` - but a few codes are read in light of
 the level, so a valid pattern at one level is not flagged at another.
 
@@ -134,8 +134,8 @@ Thanks to the people who keep false-green tests out of real suites ([emoji key](
 <table>
   <tbody>
     <tr>
-      <td align="center" valign="top" width="14.28%"><a href="https://vinicq.github.io/md-bridge/"><img src="https://avatars.githubusercontent.com/u/78210890?v=4?s=100" width="100px;" alt="Vinicius Queiroz"/><br /><sub><b>Vinicius Queiroz</b></sub></a><br /><a href="https://github.com/vinicq/falsegreen-robot/commits?author=vinicq" title="Code">💻</a> <a href="https://github.com/vinicq/falsegreen-robot/commits?author=vinicq" title="Documentation">📖</a> <a href="#ideas-vinicq" title="Ideas, Planning, & Feedback">🤔</a> <a href="#maintenance-vinicq" title="Maintenance">🚧</a> <a href="#infra-vinicq" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="https://github.com/vinicq/falsegreen-robot/commits?author=vinicq" title="Tests">⚠️</a> <a href="#research-vinicq" title="Research">🔬</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/homesellerq-coder"><img src="https://avatars.githubusercontent.com/u/294912019?v=4?s=100" width="100px;" alt="Home Seller"/><br /><sub><b>Home Seller</b></sub></a><br /><a href="https://github.com/vinicq/falsegreen-robot/commits?author=homesellerq-coder" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://vinicq.github.io/md-bridge/"><img src="https://avatars.githubusercontent.com/u/78210890?v=4?s=100" width="100px;" alt="Vinicius Queiroz"/><br /><sub><b>Vinicius Queiroz</b></sub></a><br /><a href="https://github.com/vinicq/robotframework-falsegreen/commits?author=vinicq" title="Code">💻</a> <a href="https://github.com/vinicq/robotframework-falsegreen/commits?author=vinicq" title="Documentation">📖</a> <a href="#ideas-vinicq" title="Ideas, Planning, & Feedback">🤔</a> <a href="#maintenance-vinicq" title="Maintenance">🚧</a> <a href="#infra-vinicq" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="https://github.com/vinicq/robotframework-falsegreen/commits?author=vinicq" title="Tests">⚠️</a> <a href="#research-vinicq" title="Research">🔬</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/homesellerq-coder"><img src="https://avatars.githubusercontent.com/u/294912019?v=4?s=100" width="100px;" alt="Home Seller"/><br /><sub><b>Home Seller</b></sub></a><br /><a href="https://github.com/vinicq/robotframework-falsegreen/commits?author=homesellerq-coder" title="Code">💻</a></td>
     </tr>
   </tbody>
 </table>
