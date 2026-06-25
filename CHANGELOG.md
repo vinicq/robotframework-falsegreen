@@ -8,6 +8,28 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- New detection codes (issue #19, from the consolidated catalog):
+  - **C3 (status form)**: `Run Keyword And Ignore Error` / `Run Keyword And Return Status` whose
+    status is captured in a variable that no later step reads. This is the Robot try/except/pass -
+    the failure is swallowed even when the test verifies something else. The existing bare-call C3
+    (result discarded entirely) is unchanged. (catalog RF3, high)
+  - **R6**: `Should Be True` on a string literal (not an expression). A non-empty string is always
+    truthy, so the check never fails. A bare `${x}` stays C6, a constant stays C5. (catalog RF17, low)
+  - **C9**: `Run Keyword And Expect Error` with a catch-all pattern (`*`, `GLOB:*`, `EQUALS:*`) -
+    accepts any error, so a wrong failure still passes. A specific pattern is recognized as a real
+    oracle. (low)
+  - **C20**: a verification keyword after a terminator (`[Return]`/`Return From Keyword` in a
+    keyword, `Fail`/`Pass Execution` in a test) in the same block - a dead step that never runs.
+    Each block body is scanned on its own. (high)
+  - **C37**: a duplicate data row in a `[Template]` - the same scenario runs twice, no extra
+    coverage. (low)
+  - **CC**: a commented-out verification keyword (`# Should Be Equal ...`, `# Page Should Contain
+    ...`, `# Verify ...`). Raw source scan, since the parser drops comments; a plain prose comment
+    is not flagged. (low)
+- Scope documented in the README: RF16 (`Wait Until Keyword Succeeds`) is left out (high
+  false-positive rate on legitimate retries); the Robocop-covered hygiene codes (RF6/8/13/14/15/19)
+  are deferred to Robocop; and C8 (float equality) and C18 (stringified compare) have no idiomatic
+  Robot form so they are not ported.
 - `--format text|json|sarif|junit` (parity with the Python `falsegreen`). `--json` stays as
   an alias for `--format json` and keeps its envelope (`tool`/`version`/`judgments`/`findings`).
   SARIF 2.1.0 carries the tool name `robotframework-falsegreen`, maps confidence to severity

@@ -748,3 +748,236 @@ def test_baseline_cli_suppresses_known(tmp_path):
     main([str(f), "--write-baseline", str(bl)])
     # with the baseline the run is green (known findings suppressed)
     assert main([str(f), "--baseline", str(bl)]) == 0
+
+
+# --- RF3 (status form) + RF17 + C-parity (issue #19) -------------------------
+# RF3 maps to C3 here (shared id with the siblings). The bare-call C3 was already
+# covered; these add the form where the status IS captured but never asserted.
+
+def test_c3_swallow_status_assigned_but_never_used(tmp_path):
+    body = """\
+*** Test Cases ***
+Captures And Drops
+    ${status}    ${value}=    Run Keyword And Ignore Error    Do Risky Thing
+    Log    moving on
+"""
+    assert "C3" in codes(tmp_path, body)
+
+
+def test_no_c3_when_swallowed_status_is_asserted(tmp_path):
+    body = """\
+*** Test Cases ***
+Captures And Checks
+    ${status}    ${value}=    Run Keyword And Ignore Error    Do Risky Thing
+    Should Be Equal    ${status}    PASS
+"""
+    assert "C3" not in codes(tmp_path, body)
+
+
+def test_no_c3_when_swallowed_value_is_used(tmp_path):
+    body = """\
+*** Test Cases ***
+Uses The Value
+    ${status}    ${value}=    Run Keyword And Ignore Error    Read Config
+    Should Be Equal    ${value}    expected
+"""
+    assert "C3" not in codes(tmp_path, body)
+
+
+def test_c3_return_status_assigned_but_never_used(tmp_path):
+    body = """\
+*** Test Cases ***
+Return Status Dropped
+    ${ok}=    Run Keyword And Return Status    Do Risky Thing
+    Log    done
+"""
+    assert "C3" in codes(tmp_path, body)
+
+
+def test_c3_status_form_in_keyword(tmp_path):
+    body = """\
+*** Keywords ***
+Try The Thing
+    ${status}    ${value}=    Run Keyword And Ignore Error    Do Risky Thing
+    Log    swallowed
+"""
+    assert "C3" in codes(tmp_path, body, name="kw.resource")
+
+
+# RF17 -> R6 (Robot-specific, low): Should Be True on a string literal.
+
+def test_r6_should_be_true_string_literal(tmp_path):
+    body = """\
+*** Test Cases ***
+Vacuous Check
+    Should Be True    login succeeded
+"""
+    assert "R6" in codes(tmp_path, body)
+
+
+def test_no_r6_when_should_be_true_is_an_expression(tmp_path):
+    body = """\
+*** Test Cases ***
+Real Check
+    Should Be True    ${count} > 0
+"""
+    assert "R6" not in codes(tmp_path, body)
+
+
+def test_no_r6_for_constant_true_stays_c5(tmp_path):
+    # ${TRUE} / true / 1 is the always-true constant (C5), not the literal-string R6.
+    body = """\
+*** Test Cases ***
+Tautology
+    Should Be True    ${TRUE}
+"""
+    cs = codes(tmp_path, body)
+    assert "C5" in cs and "R6" not in cs
+
+
+def test_no_r6_for_bare_variable_stays_c6(tmp_path):
+    body = """\
+*** Test Cases ***
+Weak
+    ${r}=    Get Status
+    Should Be True    ${r}
+"""
+    cs = codes(tmp_path, body)
+    assert "C6" in cs and "R6" not in cs
+
+
+# C9: Run Keyword And Expect Error with a catch-all pattern.
+
+def test_c9_expect_error_catch_all_star(tmp_path):
+    body = """\
+*** Test Cases ***
+Accepts Any Error
+    Run Keyword And Expect Error    *    Do Risky Thing
+"""
+    assert "C9" in codes(tmp_path, body)
+
+
+def test_c9_expect_error_glob_star_prefix(tmp_path):
+    body = """\
+*** Test Cases ***
+Accepts Any Error Glob
+    Run Keyword And Expect Error    GLOB:*    Do Risky Thing
+"""
+    assert "C9" in codes(tmp_path, body)
+
+
+def test_no_c9_when_expect_error_pattern_is_specific(tmp_path):
+    body = """\
+*** Test Cases ***
+Expects A Specific Error
+    Run Keyword And Expect Error    ValueError: bad input    Do Risky Thing
+"""
+    assert "C9" not in codes(tmp_path, body)
+
+
+# C20: verification after a terminator ([Return]/Fail/Return From Keyword).
+
+def test_c20_verification_after_return_in_keyword(tmp_path):
+    body = """\
+*** Keywords ***
+Returns Early
+    Do Something
+    [Return]    ${x}
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" in codes(tmp_path, body, name="kw.resource")
+
+
+def test_c20_verification_after_fail_in_test(tmp_path):
+    body = """\
+*** Test Cases ***
+Fails First
+    Fail    stop here
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" in codes(tmp_path, body)
+
+
+def test_no_c20_when_verification_runs_before_return(tmp_path):
+    body = """\
+*** Keywords ***
+Checks Then Returns
+    Should Be Equal    ${a}    ${b}
+    [Return]    ${x}
+"""
+    assert "C20" not in codes(tmp_path, body, name="kw.resource")
+
+
+def test_c20_after_return_from_keyword(tmp_path):
+    body = """\
+*** Keywords ***
+Bails Out
+    Return From Keyword
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" in codes(tmp_path, body, name="kw.resource")
+
+
+# C37: duplicate [Template] data row.
+
+def test_c37_duplicate_template_row(tmp_path):
+    body = """\
+*** Test Cases ***
+Same Row Twice
+    [Template]    Verify Addition
+    1    2    3
+    1    2    3
+    4    5    9
+"""
+    assert "C37" in codes(tmp_path, body)
+
+
+def test_no_c37_when_template_rows_are_distinct(tmp_path):
+    body = """\
+*** Test Cases ***
+Distinct Rows
+    [Template]    Verify Addition
+    1    2    3
+    4    5    9
+"""
+    assert "C37" not in codes(tmp_path, body)
+
+
+# CC: commented-out verification keyword.
+
+def test_cc_commented_out_should(tmp_path):
+    body = """\
+*** Test Cases ***
+Oracle Switched Off
+    Do Something
+    # Should Be Equal    ${a}    ${b}
+    Should Contain    ${log}    ok
+"""
+    assert "CC" in codes(tmp_path, body)
+
+
+def test_cc_commented_out_page_should(tmp_path):
+    body = """\
+*** Test Cases ***
+Commented Page Check
+    Open Page
+    # Page Should Contain    Welcome
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "CC" in codes(tmp_path, body)
+
+
+def test_no_cc_for_prose_comment(tmp_path):
+    body = """\
+*** Test Cases ***
+Plain Comment
+    # this should be revisited later
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "CC" not in codes(tmp_path, body)
+
+
+def test_new_codes_in_catalog_and_fix_hints():
+    for code in ("C9", "C20", "C37", "CC", "R6"):
+        assert code in CASES, code
+        assert code in FIX_HINTS, code

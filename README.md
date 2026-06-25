@@ -76,15 +76,20 @@ RESTinstance schema keywords, DatabaseLibrary `Row Count Should Be Equal`, custo
 | C5  | high | always-true (`Should Be True  ${TRUE}`, `Should Be Equal` with equal literals) |
 | C6  | low  | weak check — `Should Be True` on a bare variable (truthiness only, not a comparison) |
 | C7  | high | self-compare (`Should Be Equal  ${x}  ${x}`) |
+| C9  | low  | `Run Keyword And Expect Error` with a catch-all pattern (`*`, `GLOB:*`) — accepts any error |
 | C16 | low  | `Sleep` used as synchronization (timing dependence) |
+| C20 | high | verification after a `[Return]`/`Return From Keyword`/`Fail`/`Pass Execution` in the same block — a dead step that never runs |
 | C21 | low  | verification only runs conditionally (inside `IF` / `Run Keyword If`) — it may never execute |
 | C23 | low  | hard-coded IP-address URL in test data (`http://10.0.0.5:8080`) — environment coupling |
 | C32 | low  | skipped test (`robot:skip` / `Skip`) |
+| C37 | low  | duplicate data row in a `[Template]` — the same scenario runs twice, no extra coverage |
+| CC  | low  | commented-out verification keyword (`# Should Be Equal ...`) — the oracle is switched off |
 | R1  | high | `Pass Execution` forces the test green regardless of any check |
 | R2  | low  | user keyword named like a verifier (`Verify`/`Assert`/`Should`...) but its body verifies nothing — a hollow oracle |
 | R3  | high | `*** Test Cases ***` inside a `.resource` file — invalid; the cases never run |
 | R4  | high | `No Operation` is the only step — the test/task/keyword does nothing |
 | R5  | high | `[Template]` with no data rows — the templated test runs zero cases |
+| R6  | low  | `Should Be True` on a string literal (not an expression) — a non-empty string is always truthy, so it never fails |
 
 Scans `*** Test Cases ***`, `*** Tasks ***` (RPA), and `*** Keywords ***` definitions in
 both `.robot` and `.resource` files. R2 catches the root cause of a missed C2b: a test
@@ -105,9 +110,11 @@ Three groups, mirroring `falsegreen` and `falsegreen-js`: `false-positive` (C*/R
 rffalsegreen --diagnostics    # include D*/M* as warnings
 ```
 
-Codes share ids with the sibling scanners where the concept matches (C2/C2b/C3/C5/C7/C16/C21/C32).
-A Browser `Get` keyword with no assertion operator is a plain getter, so a test whose only
-step is `Get Text  h1` surfaces as no-verification (C2b).
+Codes share ids with the sibling scanners where the concept matches (C2/C2b/C3/C5/C7/C9/C16/C20/C21/C32/C37/CC).
+`R*` are Robot-specific. A Browser `Get` keyword with no assertion operator is a plain getter, so a
+test whose only step is `Get Text  h1` surfaces as no-verification (C2b). The consolidated catalog's
+Robot ids map onto these: RF3 is C3 (here it also catches the form where the status is captured in a
+variable but never asserted), RF17 is R6, RF18 is R5, RF20 is C7.
 
 ## Test levels (the pyramid)
 
@@ -135,6 +142,36 @@ cannot see runtime-only smells (Test Run War, order dependence across suites). W
 expected value contradicts the intended behavior is semantic and belongs to
 `falsegreen-skill`. Precision over recall: `C2b` is low-confidence because a custom keyword
 may assert internally without `Should` in its name.
+
+### Not implemented, on purpose
+
+Some catalog codes are left out because the gain is not worth the false positives, or because
+another tool already owns them. Listing them is part of the scope:
+
+- **RF16 (`Wait Until Keyword Succeeds`)** — a retry wrapper. Legitimate retry around genuinely
+  asynchronous behavior is common and idiomatic, so flagging every use would be mostly noise. The
+  false-positive rate is too high for a static rule; this is a judgment call left to review.
+- **Hygiene already covered by [Robocop](https://github.com/MarketSquare/robotframework-robocop)** —
+  RF6 (dead keyword, cross-file), RF8 (unused argument), RF13 (duplicate name), RF14 (missing
+  documentation), RF15 (too long), RF19 (unused import). These are maintainability lint, not
+  false-green, and Robocop detects them well. Run Robocop alongside this scanner; there is no reason
+  to reimplement them.
+
+### C-codes with no idiomatic Robot form
+
+Three Python/JS sibling codes have no clean Robot equivalent and are intentionally skipped:
+
+- **C8 (exact float equality)** — Robot test data is untyped text, so a value cannot be proven to be
+  a float from the parse tree (`Should Be Equal As Numbers` even takes a `precision` argument). Any
+  rule here would guess, with a high false-positive rate.
+- **C18 (compare a stringified value to a literal)** — Robot has no `str()`/`repr()` round-trip
+  concept; everything is already a string. There is no structural signal to key on.
+
+C9 (broad error assertion) and C20 (dead step after a terminator) *do* have idiomatic Robot forms
+(`Run Keyword And Expect Error    *` and a verification after `[Return]`/`Fail`), so both are
+implemented above. Robot has no standard mutation tester, so the semantic layer (does a green test
+fail when the code is wrong?) stays manual review; the intent-level cases live in
+[falsegreen-skill](https://github.com/vinicq/falsegreen-skill).
 
 ## License
 
