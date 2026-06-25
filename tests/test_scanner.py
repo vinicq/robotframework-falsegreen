@@ -5,6 +5,8 @@ import json
 from falsegreen_robot.scanner import (
     analyze_file, scan, group_of, main, resolve_output_path,
     _render_text, CASES, FIX_HINTS,
+    render_sarif, render_junit, render_json, _sarif_level,
+    fingerprint, load_baseline, write_baseline,
 )
 
 
@@ -580,3 +582,169 @@ def test_config_audit_cli_exit_and_output(tmp_path):
 def test_pl9_in_catalog_and_fix_hints():
     from falsegreen_robot.scanner import CASES, FIX_HINTS
     assert "PL9" in CASES and "PL9" in FIX_HINTS
+
+
+# --- output parity: SARIF / JUnit / baseline (issue #9) ----------------------
+
+# A two-finding suite: C2 (high) in the empty test, plus C16 (low) and C7 (high)
+# in a second test. Gives a mix of high and non-high findings for the level maps.
+_MIXED = """\
+*** Test Cases ***
+Empty
+    [Documentation]    nothing
+
+Sleeps And Self Compares
+    Sleep    2s
+    Should Be Equal    ${x}    ${x}
+"""
+
+
+def test_sarif_level_map():
+    assert _sarif_level("high") == "error"
+    assert _sarif_level("low") == "warning"
+    assert _sarif_level("off") == "note"
+    assert _sarif_level("info") == "note"
+
+
+def test_sarif_shape_and_tool_name(tmp_path):
+    fs = _findings(tmp_path, _MIXED)
+    doc = json.loads(render_sarif(fs))
+    assert doc["version"] == "2.1.0"
+    assert doc["$schema"].endswith("sarif-2.1.0.json")
+    run = doc["runs"][0]
+    assert run["tool"]["driver"]["name"] == "robotframework-falsegreen"
+    # one rule per distinct emitted code, each with a defaultConfiguration level
+    rule_ids = {r["id"] for r in run["tool"]["driver"]["rules"]}
+    assert rule_ids == {f.code for f in fs}
+    for r in run["tool"]["driver"]["rules"]:
+        assert r["defaultConfiguration"]["level"] in ("error", "warning", "note")
+    # results carry the level map and a startLine, plus judgment + pyramid tags
+    by_code = {res["ruleId"]: res for res in run["results"]}
+    assert by_code["C2"]["level"] == "error"        # high -> error
+    assert by_code["C16"]["level"] == "warning"     # low  -> warning
+    assert by_code["C7"]["level"] == "error"
+    sample = run["results"][0]
+    assert sample["locations"][0]["physicalLocation"]["region"]["startLine"] >= 1
+    tags = sample["properties"]["tags"]
+    assert any(t.startswith("J") for t in tags)         # judgment family
+    assert any(t.startswith("level:") for t in tags)    # pyramid level
+
+
+def test_junit_failure_and_skipped(tmp_path):
+    fs = _findings(tmp_path, _MIXED)
+    xml = render_junit(fs)
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml)
+    suite = root.find("testsuite")
+    assert suite.get("name") == "robotframework-falsegreen"
+    n_high = sum(1 for f in fs if CASES[f.code][1] == "high")
+    assert suite.get("failures") == str(n_high)
+    assert suite.get("skipped") == str(len(fs) - n_high)
+    # high finding -> <failure>, low finding -> <skipped>
+    cases = suite.findall("testcase")
+    for c in cases:
+        code = c.get("classname").split(".")[-1]
+        if CASES[code][1] == "high":
+            assert c.find("failure") is not None
+            assert c.find("skipped") is None
+        else:
+            assert c.find("skipped") is not None
+            assert c.find("failure") is None
+
+
+def test_format_sarif_via_cli(tmp_path):
+    f = tmp_path / "t.robot"
+    f.write_text(_EMPTY_TEST, encoding="utf-8")
+    out = tmp_path / "report.sarif"
+    rc = main([str(f), "--format", "sarif", "--output", str(out)])
+    assert rc == 20  # C2 is high
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["runs"][0]["results"][0]["ruleId"] == "C2"
+
+
+def test_format_junit_via_cli(tmp_path):
+    f = tmp_path / "t.robot"
+    f.write_text(_EMPTY_TEST, encoding="utf-8")
+    out = tmp_path / "report.xml"
+    main([str(f), "--format", "junit", "--output", str(out)])
+    body = out.read_text(encoding="utf-8")
+    assert "<testsuite" in body and "C2" in body
+
+
+def test_json_output_unchanged(tmp_path):
+    """--json and --format json keep the historical envelope shape."""
+    fs = _findings(tmp_path, _EMPTY_TEST)
+    doc = json.loads(render_json(fs))
+    assert doc["tool"] == "robotframework-falsegreen"
+    assert "version" in doc and "judgments" in doc
+    assert doc["findings"][0]["code"] == "C2"
+    # the CLI alias produces byte-identical output to --format json
+    f = tmp_path / "t.robot"
+    f.write_text(_EMPTY_TEST, encoding="utf-8")
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    main([str(f), "--json", "--output", str(a)])
+    main([str(f), "--format", "json", "--output", str(b)])
+    assert a.read_text(encoding="utf-8") == b.read_text(encoding="utf-8")
+
+
+def test_fingerprint_ignores_line_number(tmp_path):
+    """Same finding shifted down the file keeps its fingerprint (no line in the key)."""
+    body_top = _MIXED
+    body_shifted = "\n\n\n" + _MIXED  # push every test down three lines
+    fs_top = _findings(tmp_path, body_top, name="a.robot")
+    fs_shifted = _findings(tmp_path, body_shifted, name="a.robot")
+    # match on (code, detail); the file path is the same name
+    by_top = {(f.code, f.detail): fingerprint(f) for f in fs_top}
+    by_shifted = {(f.code, f.detail): fingerprint(f) for f in fs_shifted}
+    assert by_top == by_shifted
+    assert all(len(v) == 16 for v in by_top.values())
+
+
+def test_baseline_round_trip_write_read(tmp_path):
+    fs = _findings(tmp_path, _MIXED)
+    bl = tmp_path / "baseline.json"
+    n = write_baseline(str(bl), fs)
+    assert n == len(fs)
+    loaded = load_baseline(str(bl))
+    assert loaded == {fingerprint(f) for f in fs}
+
+
+def test_baseline_suppresses_known_keeps_new(tmp_path):
+    suite = tmp_path / "s.robot"
+    suite.write_text(_MIXED, encoding="utf-8")
+    # baseline records the current findings
+    bl = tmp_path / "baseline.json"
+    write_baseline(str(bl), scan([str(suite)]))
+    # re-scan against the baseline: everything known is suppressed
+    assert scan([str(suite)], baseline=load_baseline(str(bl))) == []
+    # add a new failing test, only it survives the baseline filter
+    suite.write_text(_MIXED + "\nBrand New\n    [Documentation]    empty\n",
+                     encoding="utf-8")
+    survivors = scan([str(suite)], baseline=load_baseline(str(bl)))
+    assert [f.code for f in survivors] == ["C2"]
+    assert survivors[0].test == "Brand New"
+
+
+def test_load_baseline_missing_file_is_empty(tmp_path):
+    assert load_baseline(str(tmp_path / "nope.json")) == set()
+
+
+def test_write_baseline_cli_exits_zero_and_writes(tmp_path):
+    f = tmp_path / "t.robot"
+    f.write_text(_MIXED, encoding="utf-8")
+    bl = tmp_path / "out-baseline.json"
+    rc = main([str(f), "--write-baseline", str(bl)])
+    assert rc == 0
+    doc = json.loads(bl.read_text(encoding="utf-8"))
+    assert doc["tool"] == "robotframework-falsegreen"
+    assert doc["findings"]
+
+
+def test_baseline_cli_suppresses_known(tmp_path):
+    f = tmp_path / "t.robot"
+    f.write_text(_MIXED, encoding="utf-8")
+    bl = tmp_path / "bl.json"
+    main([str(f), "--write-baseline", str(bl)])
+    # with the baseline the run is green (known findings suppressed)
+    assert main([str(f), "--baseline", str(bl)]) == 0

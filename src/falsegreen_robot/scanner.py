@@ -13,10 +13,12 @@ Output: readable text (default) or JSON (--json).
 Exit: 0 clean, 10 low-confidence only, 20 high-confidence present.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
 import sys
+import xml.etree.ElementTree as ET
 
 __version__ = "0.1.0"
 TOOL_URI = "https://github.com/vinicq/robotframework-falsegreen"
@@ -509,7 +511,7 @@ def _eff_conf(code):
     return "low" if c == "off" else c
 
 
-def scan(paths, disable=None, diagnostics=False):
+def scan(paths, disable=None, diagnostics=False, baseline=None):
     disable = disable or set()
     out = []
     for f in discover(paths):
@@ -520,6 +522,8 @@ def scan(paths, disable=None, diagnostics=False):
             if conf == "off" and not diagnostics:
                 continue
             out.append(finding)
+    if baseline:
+        out = [a for a in out if fingerprint(a) not in baseline]
     return out
 
 
@@ -562,7 +566,16 @@ def _render_text(findings):
     return "\n".join(lines)
 
 
-_OUTPUT_EXT = {"text": "txt", "json": "json"}
+_OUTPUT_EXT = {"text": "txt", "json": "json", "sarif": "sarif", "junit": "xml"}
+
+
+def _rel_uri(path):
+    """A forward-slash relative URI (load-bearing for GitHub code scanning)."""
+    try:
+        rel = os.path.relpath(path)
+    except ValueError:  # different drive on Windows
+        rel = path
+    return rel.replace("\\", "/")
 
 
 def resolve_output_path(path, fmt):
@@ -581,6 +594,153 @@ def resolve_output_path(path, fmt):
     if parent:
         os.makedirs(parent, exist_ok=True)
     return path
+
+
+# ---------------------------------------------------------------------------
+# Output formats: JSON / SARIF / JUnit. Confidence maps to severity the same way
+# in every format - HIGH is the blocker, LOW/INFO is a warning - so a finding
+# reads the same whether GitHub code scanning (SARIF) or a CI test report
+# (JUnit) consumes it. The JSON shape is unchanged (the tool/version/judgments
+# envelope), so existing consumers keep working.
+# ---------------------------------------------------------------------------
+def render_json(findings):
+    return json.dumps({"tool": "robotframework-falsegreen", "version": __version__,
+                       "judgments": JUDGMENTS,
+                       "findings": [f.dict() for f in findings]}, indent=2)
+
+
+def _sarif_level(conf):
+    if conf == "high":
+        return "error"
+    if conf == "low":
+        return "warning"
+    return "note"
+
+
+def render_sarif(findings):
+    """SARIF 2.1.0: HIGH -> error, LOW -> warning, off/info -> note (via the
+    finding's effective confidence). Forward-slash relative URIs, one tool with a
+    rule per emitted code. Each result tags its judgment family and pyramid level
+    so GitHub code scanning can group and filter them."""
+    codes = []
+    for a in findings:
+        if a.code not in codes:
+            codes.append(a.code)
+    rules = []
+    for code in codes:
+        title, default_conf, judgment = CASES[code]
+        rules.append({
+            "id": code,
+            "name": code,
+            "shortDescription": {"text": title},
+            "defaultConfiguration": {"level": _sarif_level(_eff_conf(code))},
+            "helpUri": TOOL_URI,
+            "properties": {"tags": [judgment, "group:" + group_of(code)]},
+        })
+    results = []
+    for a in findings:
+        title, _, judgment = CASES[a.code]
+        text = title + (" (%s)" % a.detail if a.detail else "")
+        results.append({
+            "ruleId": a.code,
+            "level": _sarif_level(_eff_conf(a.code)),
+            "message": {"text": text},
+            "properties": {"tags": [judgment, "group:" + group_of(a.code),
+                                    "level:" + a.level]},
+            "locations": [{
+                "physicalLocation": {
+                    "artifactLocation": {"uri": _rel_uri(a.file)},
+                    "region": {"startLine": max(a.line, 1)},
+                }
+            }],
+        })
+    doc = {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {
+                "name": "robotframework-falsegreen",
+                "informationUri": TOOL_URI,
+                "version": __version__,
+                "rules": rules,
+            }},
+            "results": results,
+        }],
+    }
+    return json.dumps(doc, ensure_ascii=False, indent=2)
+
+
+def render_junit(findings):
+    """JUnit XML: HIGH -> <failure>, LOW/INFO -> <skipped>. One testcase per
+    finding, named with the code, file and line so a CI test report links back to
+    the suite."""
+    n = len(findings)
+    n_high = sum(1 for a in findings if _eff_conf(a.code) == "high")
+    n_non_high = n - n_high
+    attrs = {"name": "robotframework-falsegreen", "tests": str(n),
+             "failures": str(n_high), "skipped": str(n_non_high), "errors": "0"}
+    suites = ET.Element("testsuites", attrs)
+    suite = ET.SubElement(suites, "testsuite", attrs)
+    for a in sorted(findings, key=lambda x: (x.file, x.line)):
+        title = CASES[a.code][0] + (" (%s)" % a.detail if a.detail else "")
+        case = ET.SubElement(suite, "testcase", {
+            "classname": "robotframework-falsegreen.%s" % a.code,
+            "name": "%s %s:%d" % (a.code, _rel_uri(a.file), a.line),
+        })
+        loc = "%s:%d" % (_rel_uri(a.file), a.line)
+        if _eff_conf(a.code) == "high":
+            el = ET.SubElement(case, "failure", {"message": title})
+            el.text = loc
+        else:
+            ET.SubElement(case, "skipped", {"message": "%s  %s" % (title, loc)})
+    xml = ET.tostring(suites, encoding="unicode")
+    return '<?xml version="1.0" encoding="utf-8"?>\n' + xml
+
+
+# ---------------------------------------------------------------------------
+# Baseline (ratchet): fingerprint by content, not line number. Adopt a tool on a
+# suite that already has findings without a wall of red - record today's
+# findings, then fail only on new ones. The fingerprint omits the line number so
+# it survives unrelated edits that shift a test up or down the file.
+# ---------------------------------------------------------------------------
+def fingerprint(finding):
+    """Stable id: sha1(relpath, code, test, detail)[:16]. No line number, so the
+    fingerprint survives unrelated line shifts in the suite. The Robot Finding has
+    no source snippet, so the test/keyword name is the content discriminator - it
+    keeps two findings with the same code and detail in one file (e.g. two empty
+    tests) from collapsing into one fingerprint."""
+    key = "\0".join([
+        _rel_uri(finding.file), finding.code,
+        finding.test or "", finding.detail or "",
+    ])
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+
+
+def load_baseline(path):
+    """Read a baseline file into a set of fingerprints (empty set if unreadable)."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return set()
+    return {item["fingerprint"] for item in data.get("findings", [])
+            if isinstance(item, dict) and item.get("fingerprint")}
+
+
+def write_baseline(path, findings):
+    """Write all current findings as a baseline. Returns how many were recorded."""
+    items = [{
+        "fingerprint": fingerprint(a),
+        "code": a.code,
+        "file": _rel_uri(a.file),
+        "test": a.test,
+        "detail": a.detail,
+    } for a in sorted(findings, key=lambda x: (x.file, x.line))]
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"version": 1, "tool": "robotframework-falsegreen", "findings": items},
+                  fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    return len(items)
 
 
 # ---------------------------------------------------------------------------
@@ -647,11 +807,28 @@ def audit_config(start=None):
     return findings
 
 
+RENDERERS = {"text": _render_text, "json": render_json,
+             "sarif": render_sarif, "junit": render_junit}
+
+
+def _emit(rendered, output, fmt):
+    """Write the rendered report to a file (resolving a directory to report.<ext>)
+    or to stdout."""
+    if output:
+        dest = resolve_output_path(output, fmt)
+        with open(dest, "w", encoding="utf-8") as fh:
+            fh.write(rendered + "\n")
+    else:
+        print(rendered)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="rffalsegreen",
                                 description="Find false-positive Robot Framework tests (static).")
     p.add_argument("paths", nargs="*", default=["."], help="files or directories (default: cwd)")
-    p.add_argument("--json", action="store_true", help="JSON output")
+    p.add_argument("--format", choices=["text", "json", "sarif", "junit"], default="text",
+                   help="output format (default: text)")
+    p.add_argument("--json", action="store_true", help="alias for --format json")
     p.add_argument("--output", default=None, metavar="PATH",
                    help="write the output to PATH instead of stdout; "
                         "a directory (e.g. .falsegreen/) gets report.<ext>")
@@ -661,38 +838,35 @@ def main(argv=None):
     p.add_argument("--disable", default="", help="comma-separated codes to turn off")
     p.add_argument("--diagnostics", action="store_true",
                    help="also report the opt-in maintainability group (D*/M*)")
+    p.add_argument("--baseline", nargs="?", const=".falsegreen-baseline.json", default=None,
+                   metavar="PATH",
+                   help="suppress findings recorded in PATH (default .falsegreen-baseline.json); "
+                        "fail only on findings not in the baseline")
+    p.add_argument("--write-baseline", nargs="?", const=".falsegreen-baseline.json", default=None,
+                   metavar="PATH",
+                   help="record all current findings to PATH as a baseline, then exit 0")
     p.add_argument("--version", action="version", version=__version__)
     args = p.parse_args(argv)
     disable = {c.strip() for c in args.disable.split(",") if c.strip()}
+    fmt = "json" if args.json else args.format
+
+    if args.write_baseline is not None:
+        findings = scan(args.paths or ["."], disable=disable, diagnostics=args.diagnostics)
+        n = write_baseline(args.write_baseline, findings)
+        sys.stderr.write("rffalsegreen: wrote %d fingerprint(s) to %s\n"
+                         % (n, args.write_baseline))
+        return 0
+
     if args.config_audit:
         base = next((d for d in (args.paths or ["."]) if os.path.isdir(d)), os.getcwd())
         findings = audit_config(base)
-        if args.json:
-            rendered = json.dumps({"tool": "robotframework-falsegreen", "version": __version__,
-                                   "judgments": JUDGMENTS,
-                                   "findings": [f.dict() for f in findings]}, indent=2)
-        else:
-            rendered = _render_text(findings)
-        if args.output:
-            dest = resolve_output_path(args.output, "json" if args.json else "text")
-            with open(dest, "w", encoding="utf-8") as fh:
-                fh.write(rendered + "\n")
-        else:
-            print(rendered)
+        _emit(RENDERERS[fmt](findings), args.output, fmt)
         return 10 if findings else 0
-    findings = scan(args.paths or ["."], disable=disable, diagnostics=args.diagnostics)
-    if args.json:
-        rendered = json.dumps({"tool": "robotframework-falsegreen", "version": __version__,
-                               "judgments": JUDGMENTS,
-                               "findings": [f.dict() for f in findings]}, indent=2)
-    else:
-        rendered = _render_text(findings)
-    if args.output:
-        dest = resolve_output_path(args.output, "json" if args.json else "text")
-        with open(dest, "w", encoding="utf-8") as fh:
-            fh.write(rendered + "\n")
-    else:
-        print(rendered)
+
+    baseline = load_baseline(args.baseline) if args.baseline else None
+    findings = scan(args.paths or ["."], disable=disable, diagnostics=args.diagnostics,
+                    baseline=baseline)
+    _emit(RENDERERS[fmt](findings), args.output, fmt)
     if any(_eff_conf(f.code) == "high" for f in findings):
         return 20
     if findings:

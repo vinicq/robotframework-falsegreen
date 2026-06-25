@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `--format text|json|sarif|junit` (parity with the Python `falsegreen`). `--json` stays as
+  an alias for `--format json` and keeps its envelope (`tool`/`version`/`judgments`/`findings`).
+  SARIF 2.1.0 carries the tool name `robotframework-falsegreen`, maps confidence to severity
+  (HIGH to `error`, LOW to `warning`, off/info to `note`), and tags each result with its
+  judgment family, group, and pyramid level. JUnit XML emits one testcase per finding: HIGH is
+  a `<failure>`, anything lower is a `<skipped>`. `--output` resolves the extension per format
+  (`report.sarif`, `report.xml` for JUnit).
+- `--baseline [PATH]` / `--write-baseline [PATH]` (default `.falsegreen-baseline.json`): adopt
+  the scanner on a suite that already has findings, then fail only on new ones. The fingerprint
+  is content-based - `sha1(relative path, code, test/keyword name, detail)[:16]`, no line number
+  - so it survives edits that shift a test up or down the file. `--write-baseline` records the
+  current findings and exits 0; `--baseline` suppresses every recorded fingerprint.
+
 ## [0.2.0] - 2026-06-23
 
 ### Changed

@@ -29,14 +29,29 @@ pip install robotframework-falsegreen
 ```bash
 rffalsegreen                  # scan cwd
 rffalsegreen tests/           # scan a path
-rffalsegreen --json           # machine-readable output
-rffalsegreen --output report.json   # write to a file
+rffalsegreen --format json    # machine-readable output (--json is an alias)
+rffalsegreen --format sarif   # SARIF 2.1.0 for GitHub code scanning
+rffalsegreen --format junit   # JUnit XML for a CI test report
+rffalsegreen --output report.sarif  # write to a file
 rffalsegreen --output .falsegreen/  # write report.<ext> into a directory
 rffalsegreen --config-audit   # audit the Robot run config (project-layer PL codes)
 rffalsegreen --disable C16    # turn off specific codes
 ```
 
-Each finding is reported with its pyramid level (unit / integration / e2e, read from the suite's imported libraries) and a one-line fix hint, and the summary breaks the findings down by level and lists the most common fixes. `--output` takes a file or a directory: an extension-less or trailing-slash path (e.g. `.falsegreen/`) receives `report.<ext>` for the chosen format. Reports are run artifacts; keep the output directory gitignored.
+`--format` selects the output shape: `text` (default), `json`, `sarif`, or `junit`. SARIF 2.1.0 (tool name `robotframework-falsegreen`) maps confidence to severity - HIGH to `error`, LOW to `warning`, off/info to `note` - and tags each result with its judgment family and pyramid level, so GitHub code scanning can group and filter findings. JUnit XML emits one testcase per finding: HIGH becomes a `<failure>`, anything lower becomes a `<skipped>`. `--json` stays as an alias for `--format json` and keeps its existing envelope (`tool` / `version` / `judgments` / `findings`).
+
+Each finding is reported with its pyramid level (unit / integration / e2e, read from the suite's imported libraries) and a one-line fix hint, and the text summary breaks the findings down by level and lists the most common fixes. `--output` takes a file or a directory: an extension-less or trailing-slash path (e.g. `.falsegreen/`) receives `report.<ext>` for the chosen format (`report.sarif`, `report.xml` for JUnit). Reports are run artifacts; keep the output directory gitignored.
+
+### Baseline (adopt on a suite that already has findings)
+
+To add the scanner to a suite with pre-existing findings without a wall of red, record a baseline and then fail only on new findings:
+
+```bash
+rffalsegreen --write-baseline    # record current findings to .falsegreen-baseline.json
+rffalsegreen --baseline          # scan, suppressing everything in the baseline
+```
+
+Both flags take an optional path (default `.falsegreen-baseline.json`). The baseline fingerprints a finding by content - `sha1(relative path, code, test/keyword name, detail)` with no line number - so it survives edits that shift a test up or down the file. Commit the baseline so CI sees the same set. A new false-green that is not in the baseline still fails the run; shrink the baseline as you fix the recorded ones.
 
 `--config-audit` is a separate mode: instead of scanning suites, it reads the Robot run config (`robot.toml`, `pyproject.toml` `[tool.robot]`, `*.args` argument files) and reports `PL9` - a `--skiponfailure` / `--noncritical` option that turns a failing test into a non-fatal pass (legacy, removed in RF 4+). The per-file scan cannot see run config.
 
