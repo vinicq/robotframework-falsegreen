@@ -47,8 +47,11 @@ Swallow
     Run Keyword And Ignore Error    Do Risky Thing
 ```
 `Run Keyword And Ignore Error` and `Run Keyword And Return Status` absorb the failure; if
-the returned status is never asserted, a broken step stays green. The same applies to a
-native `TRY/EXCEPT` that catches the error and only logs it.
+the returned status is never asserted, a broken step stays green. This covers two forms: the
+result discarded entirely (the call above, no assignment), and the status captured in a
+variable that no later step reads (`${status}    ${value}=    Run Keyword And Ignore Error
+...` with no use of `${status}` or `${value}` afterward). The same applies to a native
+`TRY/EXCEPT` that catches the error and only logs it.
 
 Clean: assert the captured status, or let `EXCEPT` re-raise with `Fail`.
 
@@ -203,6 +206,68 @@ A literal IP address ties the test to one machine: it passes or fails on whether
 is up, not on the behavior. A hostname URL (`http://localhost:8080`) is not flagged - it is
 too common in E2E to be a reliable signal. Clean: read the target from a variable or
 environment.
+
+## C9 — expects any error (low, J4)
+
+```robotframework
+*** Test Cases ***
+Accepts Any Error
+    Run Keyword And Expect Error    *    Do Risky Thing
+```
+A catch-all pattern (`*`, `GLOB:*`, `EQUALS:*`) passes on any error - a typo that raises the
+wrong failure still goes green. Clean: match the specific message or pattern
+(`Run Keyword And Expect Error    ValueError: *    Do Risky Thing`).
+
+## C20 — verification after a terminator (high, J1)
+
+```robotframework
+*** Keywords ***
+Returns Early
+    Do Something
+    [Return]    ${x}
+    Should Be Equal    ${a}    ${b}
+```
+Nothing after a `[Return]`/`Return From Keyword` (in a keyword) or a `Fail`/`Pass Execution`
+(in a test) in the same block runs. A verification there is dead code. Clean: move the check
+before the terminator so it executes.
+
+## C37 — duplicate [Template] data row (low, J4)
+
+```robotframework
+*** Test Cases ***
+Same Row Twice
+    [Template]    Verify Addition
+    1    2    3
+    1    2    3
+```
+A repeated row drives the templated keyword with the same inputs twice - the second run adds
+no coverage and hides a real case the author may have meant to write. Clean: remove the
+duplicate, or replace it with the case that was intended.
+
+## CC — commented-out verification keyword (low, J1)
+
+```robotframework
+*** Test Cases ***
+Oracle Switched Off
+    Do Something
+    # Should Be Equal    ${a}    ${b}
+```
+A verification keyword left in a comment is an oracle that no longer runs. The line reads as
+if the test still checks something; it does not. Clean: restore the keyword, or delete the
+line. A plain prose comment (`# this should be revisited`) is not flagged - the rule keys on
+a capitalized verification keyword (`Should`/`Verify`/`Assert`/`Validate`).
+
+## R6 — Should Be True on a string literal (low, J4)
+
+```robotframework
+*** Test Cases ***
+Vacuous Check
+    Should Be True    login succeeded
+```
+`Should Be True` evaluates its argument as a Python expression. A bare non-empty string is
+always truthy, so the check can never fail. Clean: pass a real expression
+(`Should Be True    ${count} > 0`). A bare `${x}` is the weaker C6 (truthiness); `${TRUE}` /
+`1` is the constant C5.
 
 ---
 

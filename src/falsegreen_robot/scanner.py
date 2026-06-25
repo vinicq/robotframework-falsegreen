@@ -37,6 +37,10 @@ CASES = {
     "C5":  ("always-true check (Should Be True ${TRUE} / Should Be Equal with equal literals)", "high", "J2"),
     "C6":  ("weak check — Should Be True on a bare variable (truthiness only, not a comparison)", "low", "J4"),
     "C7":  ("self-compare (Should Be Equal ${x} ${x})", "high", "J2"),
+    "C9":  ("Run Keyword And Expect Error with a catch-all pattern (* / EQUALS:* — accepts any error)", "low", "J4"),
+    "C20": ("verification after a [Return]/Return/Fail/Pass Execution in the same block — dead step that never runs", "high", "J1"),
+    "C37": ("duplicate data row in a [Template] — the same scenario runs twice, adds no coverage", "low", "J4"),
+    "CC":  ("commented-out verification keyword (# Should Be Equal ...) — the oracle is switched off", "low", "J1"),
     "C16": ("Sleep used as synchronization (result depends on timing)", "low", "J1"),
     "C23": ("hard-coded IP-address URL in test data (environment coupling / mystery guest)", "low", "J6"),
     "C21": ("verification only runs conditionally (inside IF / Run Keyword If) — it may never execute", "low", "J1"),
@@ -46,6 +50,7 @@ CASES = {
     "R3":  ("*** Test Cases *** section inside a .resource file — invalid; the cases never run", "high", "J1"),
     "R4":  ("No Operation is the only step — the test/task/keyword does nothing", "high", "J1"),
     "R5":  ("[Template] with no data rows — the templated test is generated with zero cases", "high", "J1"),
+    "R6":  ("Should Be True on a string literal (not an expression) — a non-empty string is always truthy, so it never fails", "low", "J4"),
     # --- diagnostic group (maintainability; default off, opt-in via --diagnostics) ---
     "D2":  ("control flow (IF/FOR/WHILE/TRY) at the test/task level — the guide advises against it", "off", "J4"),
     # --- coupling group (structure; default off, opt-in) ----------------------
@@ -80,7 +85,11 @@ FIX_HINTS = {
     "C5":  "compare against an independent expected value, not a constant",
     "C6":  "compare the value (Should Be Equal), not just its truthiness",
     "C7":  "compare against an independent expected value, not the same variable",
+    "C9":  "match the specific error message/pattern, not a catch-all",
     "C16": "wait for the condition (Wait Until...) instead of Sleep",
+    "C20": "move the verification before the [Return]/Fail so it runs",
+    "C37": "remove the duplicate [Template] data row",
+    "CC":  "restore the commented-out verification keyword, or delete the line",
     "C21": "move the verification out of the IF/Run Keyword If so it always runs",
     "C23": "read the URL from a variable/resource, not a hard-coded IP",
     "C32": "remove the skip, or document why with a reason",
@@ -89,6 +98,7 @@ FIX_HINTS = {
     "R3":  "move the test cases to a .robot suite; .resource holds keywords only",
     "R4":  "replace No Operation with real steps and a verification",
     "R5":  "add data rows to the [Template], or remove the template",
+    "R6":  "pass a real expression (${x} > 0), not a bare string literal",
     "D2":  "move control flow into a keyword; keep the test case flat",
     "M2":  "split the long test into focused cases or extract keywords",
     "PL9": "remove --skiponfailure/--noncritical so a failing test fails the run",
@@ -134,6 +144,18 @@ BROWSER_OPS = {"==", "!=", "contains", "not contains", "validate", "matches",
                ">", "<", ">=", "<=", "*=", "^=", "$=", "then"}
 VERIFY_PREFIXES = ("verify", "assert", "validate", "check ")
 SWALLOW_KEYWORDS = {"run keyword and ignore error", "run keyword and return status"}
+# Keywords that end the current block: nothing after them in the same body runs.
+# A test case cannot use [Return], so the test-level terminators are the keywords
+# that stop execution (Fail aborts, Pass Execution short-circuits to green, the
+# Return* keywords exit a user keyword). [Return]/ReturnSetting is handled
+# separately because it is a setting node, not a KeywordCall.
+TERMINATOR_KEYWORDS = {"fail", "fatal error", "pass execution",
+                       "pass execution if", "return from keyword",
+                       "return from keyword if"}
+# Run Keyword And Expect Error patterns that accept ANY error: a bare glob star
+# or an EQUALS/STARTS/GLOB form whose pattern is just a star. Matching any error
+# makes the oracle vacuous - it never tells a real failure from a typo.
+_CATCH_ALL_ERROR_RE = re.compile(r"^(?:(?:GLOB|EQUALS|STARTS|REGEXP):\s*)?\*+$", re.IGNORECASE)
 
 
 def _norm(name):
@@ -147,6 +169,8 @@ def is_verification(keyword, args):
     n = _norm(keyword)
     if "should" in n:
         return True                              # BuiltIn/Collections/String/Selenium/...
+    if n == "run keyword and expect error":
+        return True                              # asserts a failure occurs (the error is the oracle)
     if keyword in REST_SCHEMA:
         return True                              # RESTinstance schema assertions
     if n.startswith(VERIFY_PREFIXES):
@@ -160,6 +184,55 @@ def is_verification(keyword, args):
 
 def is_swallow(keyword):
     return _norm(keyword) in SWALLOW_KEYWORDS
+
+
+_VAR_NAME_RE = re.compile(r"[\$@&]\{([^{}]+)\}")
+
+
+def _assigned_names(call):
+    """Bare variable names assigned by a KeywordCall, lower-cased without the
+    ${}/decoration or trailing '='. `${status}    ${value}=` -> {'status', 'value'}."""
+    names = set()
+    for tok in getattr(call, "assign", None) or ():
+        m = _VAR_NAME_RE.search(tok or "")
+        if m:
+            names.add(_norm(m.group(1)))
+    return names
+
+
+def _referenced_names(call):
+    """Variable names referenced in a KeywordCall's keyword text and arguments,
+    lower-cased and bare. Used to tell whether a swallowed status is ever read."""
+    names = set()
+    fields = [getattr(call, "keyword", "") or ""]
+    fields += [a or "" for a in (getattr(call, "args", None) or ())]
+    for field in fields:
+        for m in _VAR_NAME_RE.finditer(field):
+            names.add(_norm(m.group(1)))
+    return names
+
+
+def _swallow_status_unused(calls):
+    """C3 (status form): a Run Keyword And Ignore Error / Return Status whose first
+    assigned variable (the status) is never referenced by a later keyword call.
+    Returns the lineno of the offending swallow, or None.
+
+    `${status}=    Run Keyword And Return Status    ...` followed by no use of
+    ${status} is the Robot try/except/pass - the failure is captured and dropped."""
+    swallows = []
+    for idx, c in enumerate(calls):
+        if type(c).__name__ != "KeywordCall" or not is_swallow(c.keyword):
+            continue
+        assigned = list(getattr(c, "assign", None) or ())
+        if not assigned:
+            continue                       # result discarded entirely - the bare-call C3 path
+        status = _assigned_names(c)
+        if not status:
+            continue
+        used_later = any(status & _referenced_names(later) for later in calls[idx + 1:])
+        if not used_later:
+            swallows.append(getattr(c, "lineno", 0) or 0)
+    return swallows[0] if swallows else None
 
 
 def _looks_constant_true(arg):
@@ -179,6 +252,28 @@ def _is_bare_variable(arg):
     """True for a lone variable like ${x} (no comparison/expression) — a weak oracle
     when passed to Should Be True (truthiness only)."""
     return bool(_BARE_VAR_RE.match((arg or "").strip()))
+
+
+# Operators that turn a Should Be True argument into a real boolean expression.
+# Robot evaluates the argument as Python, so any of these means the author wrote
+# a comparison or call - not a bare literal that is always truthy.
+_EXPR_TOKENS = ("==", "!=", "<", ">", "<=", ">=", " and ", " or ", " not ",
+                " in ", " is ", "(", "+", "-", "*", "/", "%")
+
+
+def _is_string_literal_truthy(arg):
+    """True for a Should Be True argument that is a non-empty string LITERAL with no
+    expression operators and no variable - it is always truthy, so the check can
+    never fail (RF17). A bare ${x} is C6 (truthiness), not this; an expression like
+    `${n} > 0` is a real oracle and not flagged."""
+    s = (arg or "").strip()
+    if not s:
+        return False
+    if "{" in s and "}" in s:          # contains a variable - not a plain literal
+        return False
+    if any(tok in s for tok in _EXPR_TOKENS):
+        return False                   # real expression (comparison, call, boolean)
+    return True                        # plain non-empty text: always truthy
 
 
 def _body_has_executable(node):
@@ -256,6 +351,44 @@ def _try_body_has_keyword(try_node):
     return any(type(st).__name__ == "KeywordCall" for st in (getattr(try_node, "body", None) or []))
 
 
+def _dead_verification_after_terminator(node):
+    """Yield (lineno) for each verification keyword that sits AFTER a terminator in
+    the same body block - a [Return]/Return statement, or a Fail/Pass Execution/
+    Return From Keyword call. Nothing after the terminator runs, so a check there is
+    dead (C20). Each block body is scanned on its own so a terminator inside an IF
+    branch does not orphan a sibling at the parent level."""
+    body = getattr(node, "body", None) or []
+    terminated = False
+    for item in body:
+        cls = type(item).__name__
+        if terminated and cls == "KeywordCall" and is_verification(
+                item.keyword, list(getattr(item, "args", []) or [])):
+            yield getattr(item, "lineno", 0) or 0
+        # A setting [Return]/ReturnSetting or a Return statement ends the block.
+        if cls in ("ReturnSetting", "Return", "ReturnStatement"):
+            terminated = True
+        elif cls == "KeywordCall" and _norm(item.keyword) in TERMINATOR_KEYWORDS:
+            terminated = True
+        # Recurse into control blocks (their own bodies are scanned independently).
+        if hasattr(item, "body") and cls in ("If", "For", "While", "Try"):
+            yield from _dead_verification_after_terminator(item)
+
+
+def _duplicate_template_rows(testcase):
+    """Yield the lineno of each [Template] data row that repeats an earlier row's
+    argument tuple (C37). Identical rows drive the templated keyword with the same
+    inputs twice - the second adds no coverage."""
+    seen = set()
+    for item in getattr(testcase, "body", None) or []:
+        if type(item).__name__ != "TemplateArguments":
+            continue
+        key = tuple(getattr(item, "args", None) or ())
+        if key in seen:
+            yield getattr(item, "lineno", 0) or 0
+        else:
+            seen.add(key)
+
+
 def _tags(testcase):
     tags = []
     for item in getattr(testcase, "body", None) or []:
@@ -313,6 +446,16 @@ def _call_level_smells(file, owner, calls, findings):
             findings.append(Finding(file, ln, owner, "C6", "Should Be True on a bare variable (truthiness only)"))
             has_verification = True
             continue
+        if _norm(kw) == "should be true" and args and _is_string_literal_truthy(args[0]):
+            findings.append(Finding(file, ln, owner, "R6",
+                                    "Should Be True on a string literal (always truthy)"))
+            has_verification = True
+            continue
+        if _norm(kw) == "run keyword and expect error" and args \
+                and _CATCH_ALL_ERROR_RE.match((args[0] or "").strip()):
+            findings.append(Finding(file, ln, owner, "C9", "expects any error (catch-all pattern)"))
+            has_verification = True
+            continue
         if _norm(kw) == "should be equal" and len(args) >= 2:
             if args[0] == args[1]:
                 code = "C7" if args[0].startswith("${") else "C5"
@@ -346,6 +489,19 @@ def analyze_keyword(file, kw, findings):
         return
 
     has_verification = _call_level_smells(file, name, calls, findings)
+
+    # C20: a verification after a [Return]/Return/Fail/Return From Keyword in the
+    # same block is dead - it never runs.
+    for dead_ln in _dead_verification_after_terminator(kw):
+        findings.append(Finding(file, dead_ln, name, "C20",
+                                "verification after a terminator never runs"))
+
+    # C3 (status form): a swallow whose status the keyword body never reads.
+    status_ln = _swallow_status_unused(calls)
+    if status_ln is not None:
+        findings.append(Finding(file, status_ln, name, "C3",
+                                "swallowed status is never asserted"))
+
     if _name_implies_verification(name) and not has_verification:
         findings.append(Finding(file, line, name, "R2"))
 
@@ -381,6 +537,9 @@ def analyze_testcase(file, tc, findings):
         if tmpl_kw in non_verifying:
             findings.append(Finding(file, line, name, "C2b",
                                     "templated test's keyword does not verify anything"))
+        # C37: a data row that repeats an earlier row runs the same scenario twice.
+        for dup_ln in _duplicate_template_rows(tc):
+            findings.append(Finding(file, dup_ln, name, "C37", "duplicate [Template] data row"))
         return
 
     # R1: Pass Execution at the top level forces the test green regardless of checks
@@ -406,12 +565,27 @@ def analyze_testcase(file, tc, findings):
     if len(calls) > DIAGNOSTIC_THRESHOLDS["long_test_steps"]:
         findings.append(Finding(file, line, name, "M2", "%d steps" % len(calls)))
 
+    # C20: a verification keyword after a terminator ([Return]/Fail/Pass Execution/
+    # Return From Keyword) in the same block is a dead step - it never runs.
+    for dead_ln in _dead_verification_after_terminator(tc):
+        findings.append(Finding(file, dead_ln, name, "C20",
+                                "verification after a terminator never runs"))
+
     # C3: native TRY/EXCEPT whose EXCEPT swallows the failure
     for tb in _try_blocks(tc):
         if _try_body_has_keyword(tb) and _except_swallows(tb):
             findings.append(Finding(file, getattr(tb, "lineno", line), name, "C3",
                                     "TRY failure is swallowed by EXCEPT"))
             return
+
+    # C3 (status form): the swallow assigns a status that no later step reads. The
+    # failure is captured and dropped - the Robot try/except/pass - even when the
+    # test verifies something else, so this is checked before the no-oracle paths.
+    status_ln = _swallow_status_unused(calls)
+    if status_ln is not None:
+        findings.append(Finding(file, status_ln, name, "C3",
+                                "swallowed status is never asserted"))
+        return
 
     # C3: swallow without an asserted status
     if not has_verification and any(is_swallow(c.keyword) for c in calls):
@@ -434,6 +608,33 @@ def analyze_testcase(file, tc, findings):
     )
     if not has_unconditional and (_has_control_block(tc) or any(_rkif_verifies(c) for c in calls)):
         findings.append(Finding(file, line, name, "C21"))
+
+
+# CC: a verification keyword that has been commented out. The Robot parser drops
+# comments, so this is a raw source scan: a comment line (#) whose text begins with
+# a Should*/Page Should*/...Should Be* keyword or a Verify*/Assert* call. The oracle
+# was switched off but the line stays for show.
+# The verification word must start the comment, or follow one or two capitalized
+# prefix words (a library/object name like `Page Should Contain`, `Element Should
+# Be Visible`). Requiring capitalized prefixes keeps prose out: `# this should
+# work` does not match (lower-case `this`), but `# Should Be Equal ...` does.
+_CC_RE = re.compile(
+    r"""^\s*\#\s*
+        (?:\.{3}\s*)?                       # a Robot line-continuation comment
+        (?:[A-Z][A-Za-z0-9]*(?:\ [A-Z][A-Za-z0-9]*){0,2}\ )?  # 0-3 capitalized prefix words
+        (?:Should|Verify|Assert|Validate)\b
+    """,
+    re.VERBOSE,
+)
+
+
+def _commented_out_verifications(source):
+    """Yield linenos of comment lines that look like a switched-off verification
+    keyword (CC). Matches `# Should Be Equal ...`, `# Page Should Contain ...`,
+    `# Verify Login`. A plain prose comment (# TODO, # setup) does not match."""
+    for i, line in enumerate(source.splitlines(), start=1):
+        if _CC_RE.match(line):
+            yield i
 
 
 def analyze_file(path):
@@ -476,6 +677,18 @@ def analyze_file(path):
             analyze_keyword(path, node, self_findings)
 
     _V().visit(model)
+
+    # CC: commented-out verification keyword. Raw source scan (the parser drops
+    # comments). The test/keyword name is unknown at the line level, so the finding
+    # carries the empty owner, like R3.
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            source = fh.read()
+    except Exception:
+        source = ""
+    for cc_ln in _commented_out_verifications(source):
+        self_findings.append(Finding(path, cc_ln, "", "CC", "commented-out verification keyword"))
+
     level = detect_pyramid_level(model)
     for f in findings:
         f.level = level
