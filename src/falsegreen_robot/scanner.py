@@ -33,7 +33,7 @@ JUDGMENTS = {
 CASES = {
     "C2":  ("empty test case, task, or keyword (no keywords run)", "high", "J1"),
     "C2b": ("runs keywords but no verification keyword (no oracle)", "low", "J1"),
-    "C3":  ("Run Keyword And Ignore Error/Return Status swallows the failure and the status is never asserted", "high", "J1"),
+    "C3":  ("Run Keyword And Ignore Error/Return Status, or a TRY/EXCEPT that swallows the failure, leaves the status never asserted", "high", "J1"),
     "C5":  ("always-true check (Should Be True ${TRUE} / Should Be Equal with equal literals)", "high", "J2"),
     "C6":  ("weak check — Should Be True on a bare variable (truthiness only, not a comparison)", "low", "J4"),
     "C7":  ("self-compare (Should Be Equal ${x} ${x})", "high", "J2"),
@@ -51,6 +51,7 @@ CASES = {
     "R4":  ("No Operation is the only step — the test/task/keyword does nothing", "high", "J1"),
     "R5":  ("[Template] with no data rows — the templated test is generated with zero cases", "high", "J1"),
     "R6":  ("Should Be True on a string literal (not an expression) — a non-empty string is always truthy, so it never fails", "low", "J4"),
+    "R7":  ("templated test whose in-file [Template] keyword contains no verification — every generated case runs without an oracle", "low", "J1"),
     # --- diagnostic group (maintainability; default off, opt-in via --diagnostics) ---
     "D2":  ("control flow (IF/FOR/WHILE/TRY) at the test/task level — the guide advises against it", "off", "J4"),
     # --- coupling group (structure; default off, opt-in) ----------------------
@@ -99,6 +100,7 @@ FIX_HINTS = {
     "R4":  "replace No Operation with real steps and a verification",
     "R5":  "add data rows to the [Template], or remove the template",
     "R6":  "pass a real expression (${x} > 0), not a bare string literal",
+    "R7":  "add a verification keyword to the [Template] keyword, or template a verifier",
     "D2":  "move control flow into a keyword; keep the test case flat",
     "M2":  "split the long test into focused cases or extract keywords",
     "PL9": "remove --skiponfailure/--noncritical so a failing test fails the run",
@@ -193,7 +195,31 @@ def is_verification(keyword, args):
             key, sep, val = (a or "").partition("=")
             if sep and _norm(key) == "expected_status":
                 return _norm(val) not in _EXPECTED_STATUS_OFF and bool(val.strip())
+    # Run Keywords    A    AND    B    AND    Should Be Equal ... — a chain that
+    # runs each keyword in sequence. The verification can be any segment, so split
+    # on the AND separator and check each segment's first token as a nested call.
+    if n == "run keywords":
+        for kw in _run_keywords_segments(args):
+            if is_verification(kw, []):
+                return True
     return False
+
+
+def _run_keywords_segments(args):
+    """Yield the first token (the keyword name) of each segment of a `Run Keywords`
+    argument list, split on the literal `AND` separator. `Click    AND    Should Be
+    Equal    ${a}    ${b}` -> ['Click', 'Should Be Equal']. A chain with no AND is a
+    single keyword followed by its arguments, so only the first token is the call."""
+    segment = []
+    for a in args or ():
+        if _norm(a) == "and":
+            if segment:
+                yield segment[0]
+            segment = []
+        else:
+            segment.append(a)
+    if segment:
+        yield segment[0]
 
 
 def is_swallow(keyword):
@@ -520,7 +546,15 @@ def analyze_keyword(file, kw, findings):
         findings.append(Finding(file, line, name, "R2"))
 
 
-def analyze_testcase(file, tc, findings):
+def _keyword_body_verifies(kw):
+    """True if a user keyword definition's body contains any verification keyword.
+    Runs the shared call-level scan over the body and discards its findings - only
+    the has_verification verdict matters here (used by R7)."""
+    calls = list(_keyword_calls(kw))
+    return _call_level_smells("", "", calls, [])
+
+
+def analyze_testcase(file, tc, findings, keyword_index=None):
     name = getattr(tc, "name", "") or ""
     line = getattr(tc, "lineno", 0) or 0
     calls = list(_keyword_calls(tc))
@@ -551,6 +585,19 @@ def analyze_testcase(file, tc, findings):
         if tmpl_kw in non_verifying:
             findings.append(Finding(file, line, name, "C2b",
                                     "templated test's keyword does not verify anything"))
+        # R7: the [Template] keyword is a USER keyword defined in this same file
+        # whose body contains no verification. Every generated case then runs
+        # without an oracle. FP bound: only flag when the keyword resolves in-file -
+        # an external/imported template keyword may verify via something the scanner
+        # cannot see, so stay silent. Skip when it is already a non-verifying builtin
+        # (covered by C2b above) or when the keyword is named like a verifier (R2
+        # already flags the hollow oracle on the definition).
+        elif keyword_index is not None and tmpl_kw in keyword_index:
+            kw_def = keyword_index[tmpl_kw]
+            if (not _keyword_body_verifies(kw_def)
+                    and not _name_implies_verification(getattr(kw_def, "name", "") or "")):
+                findings.append(Finding(file, line, name, "R7",
+                                        "in-file [Template] keyword verifies nothing"))
         # C37: a data row that repeats an earlier row runs the same scenario twice.
         for dup_ln in _duplicate_template_rows(tc):
             findings.append(Finding(file, dup_ln, name, "C37", "duplicate [Template] data row"))
@@ -678,14 +725,28 @@ def analyze_file(path):
                                              "Test Cases section is not allowed in a .resource file"))
                 break
 
+    # Pre-pass: index user keyword definitions in this file by normalized name, so a
+    # [Template] keyword can be resolved to its in-file body (R7). Templates may
+    # reference a keyword defined later in the file, so the index is built before any
+    # test case is analyzed.
+    keyword_index = {}
+
+    class _KwIndex(ModelVisitor):
+        def visit_Keyword(self, node):
+            nm = _norm(getattr(node, "name", "") or "")
+            if nm and nm not in keyword_index:
+                keyword_index[nm] = node
+
+    _KwIndex().visit(model)
+
     class _V(ModelVisitor):
         def visit_TestCase(self, node):
             if not is_resource:
-                analyze_testcase(path, node, self_findings)
+                analyze_testcase(path, node, self_findings, keyword_index)
 
         def visit_Task(self, node):  # RPA suites use *** Tasks ***, not *** Test Cases ***
             if not is_resource:
-                analyze_testcase(path, node, self_findings)
+                analyze_testcase(path, node, self_findings, keyword_index)
 
         def visit_Keyword(self, node):  # user keyword defs in .robot Keywords + .resource
             analyze_keyword(path, node, self_findings)

@@ -1031,6 +1031,107 @@ Plain Comment
 
 
 def test_new_codes_in_catalog_and_fix_hints():
-    for code in ("C9", "C20", "C37", "CC", "R6"):
+    for code in ("C9", "C20", "C37", "CC", "R6", "R7"):
         assert code in CASES, code
         assert code in FIX_HINTS, code
+
+
+# --- R7: templated test driven by a hollow in-file template keyword (issue #32)
+
+def test_r7_in_file_hollow_template_keyword(tmp_path):
+    # [Template] resolves to a user keyword in the SAME file that only acts
+    # (Click/Go To) and never verifies -> every generated case has no oracle.
+    body = """\
+*** Test Cases ***
+Navigates Each Page
+    [Template]    Open And Click
+    /home    button-1
+    /about    button-2
+
+*** Keywords ***
+Open And Click
+    [Arguments]    ${path}    ${selector}
+    Go To    ${path}
+    Click    ${selector}
+"""
+    assert "R7" in codes(tmp_path, body)
+
+
+def test_no_r7_when_in_file_template_keyword_verifies(tmp_path):
+    # The in-file template keyword contains a Should -> it is a real oracle, no R7.
+    body = """\
+*** Test Cases ***
+Checks Each Sum
+    [Template]    Verify Sum
+    1    2    3
+    4    5    9
+
+*** Keywords ***
+Verify Sum
+    [Arguments]    ${a}    ${b}    ${expected}
+    ${r}=    Evaluate    ${a} + ${b}
+    Should Be Equal As Integers    ${r}    ${expected}
+"""
+    assert "R7" not in codes(tmp_path, body)
+
+
+def test_no_r7_when_template_keyword_is_external(tmp_path):
+    # FP bound: the [Template] keyword is NOT defined in this file (imported from a
+    # resource the scanner cannot see). It may verify via a hidden keyword, so the
+    # scanner must stay silent - no R7, no false positive.
+    body = """\
+*** Settings ***
+Resource    shared.resource
+
+*** Test Cases ***
+Runs Imported Template
+    [Template]    Verify Addition From Resource
+    1    2    3
+    4    5    9
+"""
+    cs = codes(tmp_path, body)
+    assert "R7" not in cs
+    assert "C2b" not in cs
+
+
+def test_no_r7_when_template_keyword_named_like_verifier(tmp_path):
+    # A hollow keyword named like a verifier is already R2 on its definition; the
+    # templated test is not double-flagged R7.
+    body = """\
+*** Test Cases ***
+Uses A Named Verifier
+    [Template]    Verify Page
+    /home
+    /about
+
+*** Keywords ***
+Verify Page
+    [Arguments]    ${path}
+    Go To    ${path}
+    Click    submit
+"""
+    cs = codes(tmp_path, body)
+    assert "R7" not in cs
+    assert "R2" in cs
+
+
+# --- Run Keywords precision (issue #33): the chain's segments are scanned ------
+
+def test_no_c2b_when_run_keywords_chain_has_verification(tmp_path):
+    # Run Keywords splits on AND; one segment is Should Be Equal -> a real oracle.
+    body = """\
+*** Test Cases ***
+Chained With A Check
+    Run Keywords    Click    button    AND    Should Be Equal    ${a}    ${b}
+"""
+    assert "C2b" not in codes(tmp_path, body)
+
+
+def test_c2b_when_run_keywords_chain_has_no_verification(tmp_path):
+    # A chain of only actions has no oracle -> still C2b.
+    body = """\
+*** Test Cases ***
+Chained Actions Only
+    Run Keywords    Click    button    AND    Go To    /home
+"""
+    assert "C2b" in codes(tmp_path, body)

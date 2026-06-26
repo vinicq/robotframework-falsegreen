@@ -8,6 +8,27 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **R7** (low): a templated test whose `[Template]` keyword is a user keyword defined in the
+  same file and whose body contains no verification - every generated case runs without an
+  oracle. The rule only fires when the keyword resolves in-file; a `[Template]` keyword
+  imported from a resource is left alone, since it may verify through a keyword the scanner
+  cannot see. A hollow keyword named like a verifier is already R2 on its definition, so the
+  templated test is not double-flagged. (issue #32)
+
+### Fixed
+
+- **`Run Keywords` precision** (issue #33): the verification scan now splits a `Run Keywords`
+  call on its `AND` separator and checks each segment's keyword, so
+  `Run Keywords    Click    AND    Should Be Equal    ${a}    ${b}` is recognized as carrying
+  an oracle and no longer falsely flagged C2b. A chain of only actions is still C2b.
+
+### Changed
+
+- **C3 wording** (issue #35): the catalog text now reads "Run Keyword And Ignore Error/Return
+  Status, or a TRY/EXCEPT that swallows the failure, leaves the status never asserted" so it
+  covers the native `TRY/EXCEPT` swallow case the scanner already detects, not only the
+  `Run Keyword And ...` forms.
+
 - New detection codes (issue #19, from the consolidated catalog):
   - **C3 (status form)**: `Run Keyword And Ignore Error` / `Run Keyword And Return Status` whose
     status is captured in a variable that no later step reads. This is the Robot try/except/pass -

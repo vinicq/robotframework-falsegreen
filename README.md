@@ -81,7 +81,7 @@ RESTinstance schema keywords, DatabaseLibrary `Row Count Should Be Equal`, custo
 |---|---|---|
 | C2  | high | empty test case, task, or keyword (no keywords run) |
 | C2b | low  | runs keywords but no verification keyword (no oracle) |
-| C3  | high | `Run Keyword And Ignore Error`/`Return Status` swallows the failure, status never asserted |
+| C3  | high | `Run Keyword And Ignore Error`/`Return Status`, or a `TRY/EXCEPT` that swallows the failure, leaves the status never asserted |
 | C5  | high | always-true (`Should Be True  ${TRUE}`, `Should Be Equal` with equal literals) |
 | C6  | low  | weak check — `Should Be True` on a bare variable (truthiness only, not a comparison) |
 | C7  | high | self-compare (`Should Be Equal  ${x}  ${x}`) |
@@ -99,6 +99,7 @@ RESTinstance schema keywords, DatabaseLibrary `Row Count Should Be Equal`, custo
 | R4  | high | `No Operation` is the only step — the test/task/keyword does nothing |
 | R5  | high | `[Template]` with no data rows — the templated test runs zero cases |
 | R6  | low  | `Should Be True` on a string literal (not an expression) — a non-empty string is always truthy, so it never fails |
+| R7  | low  | templated test whose in-file `[Template]` keyword contains no verification — every generated case runs without an oracle (only when the keyword resolves in the same file) |
 
 Scans `*** Test Cases ***`, `*** Tasks ***` (RPA), and `*** Keywords ***` definitions in
 both `.robot` and `.resource` files. R2 catches the root cause of a missed C2b: a test

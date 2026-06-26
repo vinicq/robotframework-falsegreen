@@ -269,6 +269,43 @@ always truthy, so the check can never fail. Clean: pass a real expression
 (`Should Be True    ${count} > 0`). A bare `${x}` is the weaker C6 (truthiness); `${TRUE}` /
 `1` is the constant C5.
 
+## R7 — templated test driven by a hollow in-file keyword (low, J1)
+
+```robotframework
+*** Test Cases ***
+Navigates Each Page
+    [Template]    Open And Click
+    /home     button-1
+    /about    button-2
+
+*** Keywords ***
+Open And Click
+    [Arguments]    ${path}    ${selector}
+    Go To    ${path}
+    Click    ${selector}
+```
+A templated test runs its `[Template]` keyword once per data row. When that keyword is defined
+in the same file and its body never verifies anything, every generated case passes without an
+oracle. Clean: the template keyword asserts the outcome.
+
+```robotframework
+*** Test Cases ***
+Checks Each Sum
+    [Template]    Verify Sum
+    1    2    3
+    4    5    9
+
+*** Keywords ***
+Verify Sum
+    [Arguments]    ${a}    ${b}    ${expected}
+    ${r}=    Evaluate    ${a} + ${b}
+    Should Be Equal As Integers    ${r}    ${expected}
+```
+The rule only fires when the keyword resolves in the same file. A `[Template]` keyword imported
+from a resource is left alone - it may verify through a keyword the scanner cannot see. A
+hollow keyword named like a verifier (`Verify Page`) is already flagged R2 on its definition,
+so the templated test is not double-flagged.
+
 ---
 
 ## Opt-in groups (default off, `--diagnostics`)
