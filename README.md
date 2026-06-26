@@ -153,6 +153,8 @@ expected value contradicts the intended behavior is semantic and belongs to
 `falsegreen-skill`. Precision over recall: `C2b` is low-confidence because a custom keyword
 may assert internally without `Should` in its name.
 
+Measured against the [Open Catalog of Test Smells](https://test-smell-catalog.readthedocs.io/) (517 documented smells), only the false-green slice is in scope. What stays out, on purpose: **brittleness / false-red** (sensitive equality, fragile fixtures - the opposite axis), **hygiene / maintainability** (long tests, magic values - linter territory, Robocop), and **slow, design, naming, duplication, runtime/culture**. The boundary is deliberate: where a smell has a statically provable false-green form, that form is a code here - `Sleep` as synchronization is `C16`, a hard-coded IP URL is `C23`, conditional-only verification is `C21`, and a test with no verification keyword is `C2b`. See [CREDITS.md](CREDITS.md) for the full cross-walk.
+
 ### Not implemented, on purpose
 
 Some catalog codes are left out because the gain is not worth the false positives, or because
