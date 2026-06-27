@@ -162,6 +162,10 @@ SWALLOW_KEYWORDS = {"run keyword and ignore error", "run keyword and return stat
 # because it is a setting node, not a KeywordCall.
 TERMINATOR_KEYWORDS = {"fail", "fatal error", "pass execution",
                        "return from keyword"}
+CONDITIONAL_TERMINATOR_KEYWORDS = {"pass execution if", "return from keyword if"}
+# Guard values that Robot always evaluates as true, so a `...If` terminator with
+# this guard never lets the following step run (the rest of the block is dead).
+_CONST_TRUE_GUARDS = {"true", "${true}", "1"}
 # Run Keyword And Expect Error patterns that accept ANY error: a bare glob star,
 # or a GLOB form whose pattern is just star(s). Only the glob matcher reads `*` as
 # a wildcard - a bare pattern is glob by default. EQUALS:* / STARTS:* match the
@@ -453,6 +457,10 @@ def _dead_verification_after_terminator(node):
             terminated = True
         elif cls == "KeywordCall" and _norm(item.keyword) in TERMINATOR_KEYWORDS:
             terminated = True
+        elif cls == "KeywordCall" and _norm(item.keyword) in CONDITIONAL_TERMINATOR_KEYWORDS:
+            guard = next(iter(getattr(item, "args", []) or []), "")
+            if _norm(guard) in _CONST_TRUE_GUARDS:
+                terminated = True
         # Recurse into control blocks (their own bodies are scanned independently).
         if hasattr(item, "body") and cls in ("If", "For", "While", "Try"):
             yield from _dead_verification_after_terminator(item)

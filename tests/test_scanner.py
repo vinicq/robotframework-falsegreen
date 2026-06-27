@@ -1058,6 +1058,42 @@ Bails Conditionally
     assert "C20" not in codes(tmp_path, body, name="kw.resource")
 
 
+def test_c20_when_pass_execution_if_guard_is_const_true(tmp_path):
+    # Codex on #20: a `...If` terminator with a constant-true guard (${TRUE}, true,
+    # 1) always fires, so the following verification is dead - C20 must fire.
+    body = """\
+*** Test Cases ***
+Always Passes First
+    Pass Execution If    ${TRUE}    done
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" in codes(tmp_path, body)
+
+
+def test_c20_when_return_from_keyword_if_guard_is_const_true(tmp_path):
+    # Codex on #20: lowercase `true` guard is also always-true; the check after the
+    # forced return is dead.
+    body = """\
+*** Keywords ***
+Bails Always
+    Return From Keyword If    true    ${x}
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" in codes(tmp_path, body, name="kw.resource")
+
+
+def test_no_c20_when_pass_execution_if_guard_is_variable(tmp_path):
+    # The fix must not weaken the conditional case: a variable guard still lets the
+    # verification run when the condition is false, so it is NOT dead.
+    body = """\
+*** Test Cases ***
+Maybe Passes
+    Pass Execution If    ${cond}    skip
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" not in codes(tmp_path, body)
+
+
 def test_c20_after_unconditional_top_level_fail(tmp_path):
     # FINDING B: a bare top-level Fail is unconditional - the verification after it
     # is dead, so C20 still fires (the fix must not weaken the real case).
