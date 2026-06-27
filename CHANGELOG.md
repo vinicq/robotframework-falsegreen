@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- `C2b` no longer false-positives on `Wait Until Keyword Succeeds  <retry>  <interval>
+  Should Be Equal ...`: `is_verification` now peeks inside the retry wrapper and recurses
+  on the inner keyword, so retrying a real assertion counts as an oracle. Retrying a bare
+  action (`... Click ...`) still has no oracle and stays flagged (#46).
+
 ## [0.3.0] - 2026-06-27
 
 ### Fixed

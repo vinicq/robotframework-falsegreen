@@ -92,6 +92,35 @@ Bare Get
     assert "C2b" in codes(tmp_path, body)
 
 
+def test_c2b_flagged_on_wuks_around_non_oracle(tmp_path):
+    # Wait Until Keyword Succeeds retrying a bare action asserts nothing - still C2b.
+    body = """\
+*** Test Cases ***
+Retry An Action
+    Wait Until Keyword Succeeds    5x    1s    Click    id:submit
+"""
+    assert "C2b" in codes(tmp_path, body)
+
+
+def test_no_c2b_on_wuks_around_assertion(tmp_path):
+    # The fix for #46: WUKS retrying a real assertion IS a verification. The scanner
+    # must peek inside the wrapper's arguments, so this is not a no-oracle false positive.
+    body = """\
+*** Test Cases ***
+Retry An Assertion
+    Wait Until Keyword Succeeds    5x    1s    Should Be Equal    ${a}    ${b}
+"""
+    assert "C2b" not in codes(tmp_path, body)
+
+
+def test_is_verification_peeks_inside_wuks():
+    # Unit-level guard for the WUKS recursion in is_verification.
+    assert is_verification("Wait Until Keyword Succeeds",
+                           ["5x", "1s", "Should Be Equal", "${a}", "${b}"]) is True
+    assert is_verification("Wait Until Keyword Succeeds",
+                           ["5x", "1s", "Click", "id:submit"]) is False
+
+
 def test_c2b_not_flagged_on_expected_status_on_session(tmp_path):
     # The "On Session" form carries expected_status too.
     body = """\

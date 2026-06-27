@@ -225,6 +225,15 @@ def is_verification(keyword, args, local_keywords=None):
         return True                              # custom Verify*/Assert*/Validate*/Check *
     if n.startswith("wait until") and any(w in n for w in ("contain", "visible", "present")):
         return True                              # Selenium/Appium waits that fail on timeout
+    # Wait Until Keyword Succeeds  <retry>  <interval>  <keyword>  *args - a retry
+    # wrapper. It is an oracle only if the wrapped keyword is one: retrying an
+    # assertion (Should Be Equal) is verification; retrying a bare action (Click) is
+    # not. Skip the two retry-config args, then resolve the inner keyword and recurse.
+    if n == "wait until keyword succeeds":
+        inner = list(args or ())[2:]
+        if inner:
+            return is_verification(inner[0], inner[1:], local_keywords)
+        return False
     if n.startswith("get ") and any(a in BROWSER_OPS for a in (args or ())):
         return True                              # Browser assertion engine: Get ... == expected
     # RequestsLibrary: GET/POST/... (optionally "On Session") with a specific
