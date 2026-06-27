@@ -37,7 +37,7 @@ CASES = {
     "C5":  ("always-true check (Should Be True ${TRUE} / Should Be Equal with equal literals)", "high", "J2"),
     "C6":  ("weak check — Should Be True on a bare variable (truthiness only, not a comparison)", "low", "J4"),
     "C7":  ("self-compare (Should Be Equal ${x} ${x})", "high", "J2"),
-    "C9":  ("Run Keyword And Expect Error with a catch-all pattern (* / EQUALS:* — accepts any error)", "low", "J4"),
+    "C9":  ("Run Keyword And Expect Error with a catch-all pattern (*, GLOB:*, or REGEXP:.* accepts any error)", "low", "J4"),
     "C20": ("verification after a [Return]/Return/Fail/Pass Execution in the same block — dead step that never runs", "high", "J1"),
     "C37": ("duplicate data row in a [Template] — the same scenario runs twice, adds no coverage", "low", "J4"),
     "CC":  ("commented-out verification keyword (# Should Be Equal ...) — the oracle is switched off", "low", "J1"),
@@ -152,18 +152,32 @@ HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 # expected_status values that DISABLE the check (no oracle): the request accepts any outcome.
 _EXPECTED_STATUS_OFF = {"any", "anything"}
 SWALLOW_KEYWORDS = {"run keyword and ignore error", "run keyword and return status"}
-# Keywords that end the current block: nothing after them in the same body runs.
-# A test case cannot use [Return], so the test-level terminators are the keywords
-# that stop execution (Fail aborts, Pass Execution short-circuits to green, the
-# Return* keywords exit a user keyword). [Return]/ReturnSetting is handled
-# separately because it is a setting node, not a KeywordCall.
+# Keywords that UNCONDITIONALLY end the current block: nothing after them in the
+# same body runs. A test case cannot use [Return], so the test-level terminators
+# are the keywords that always stop execution (Fail aborts, Pass Execution
+# short-circuits to green, Return From Keyword exits a user keyword). The `...If`
+# variants (Pass Execution If, Return From Keyword If) and Run Keyword If are
+# CONDITIONAL - a verification after them runs when the guard is false, so they
+# do NOT terminate the block. [Return]/ReturnSetting is handled separately
+# because it is a setting node, not a KeywordCall.
 TERMINATOR_KEYWORDS = {"fail", "fatal error", "pass execution",
-                       "pass execution if", "return from keyword",
-                       "return from keyword if"}
-# Run Keyword And Expect Error patterns that accept ANY error: a bare glob star
-# or an EQUALS/STARTS/GLOB form whose pattern is just a star. Matching any error
-# makes the oracle vacuous - it never tells a real failure from a typo.
-_CATCH_ALL_ERROR_RE = re.compile(r"^(?:(?:GLOB|EQUALS|STARTS|REGEXP):\s*)?\*+$", re.IGNORECASE)
+                       "return from keyword"}
+CONDITIONAL_TERMINATOR_KEYWORDS = {"pass execution if", "return from keyword if"}
+# Guard values that Robot always evaluates as true, so a `...If` terminator with
+# this guard never lets the following step run (the rest of the block is dead).
+_CONST_TRUE_GUARDS = {"true", "${true}", "1"}
+# Run Keyword And Expect Error patterns that accept ANY error: a bare glob star,
+# or a GLOB form whose pattern is just star(s). Only the glob matcher reads `*` as
+# a wildcard - a bare pattern is glob by default. EQUALS:* / STARTS:* match the
+# LITERAL string "*" (a specific message), and REGEXP:* is an invalid regex, so
+# none of those is a catch-all. Matching any error makes the oracle vacuous - it
+# never tells a real failure from a typo.
+_CATCH_ALL_ERROR_RE = re.compile(r"^(?:GLOB:\s*)?\*+$", re.IGNORECASE)
+# The regex form of the same vacuous oracle: REGEXP: followed by a pattern that
+# matches every message (`.*`, `.+`, lazy `.*?`, with optional anchors/parens),
+# e.g. `REGEXP:.*` or `REGEXP:^.*$`. A bare `.*` is NOT this: without REGEXP: it is
+# glob, where `.` is literal, so it only matches messages starting with a dot.
+_CATCH_ALL_REGEXP_RE = re.compile(r"^REGEXP:\s*\^?\(?\.[*+]\??\)?\$?$", re.IGNORECASE)
 
 
 def _norm(name):
@@ -332,11 +346,17 @@ _EXPR_TOKENS = ("==", "!=", "<", ">", "<=", ">=", " and ", " or ", " not ",
                 " in ", " is ", "(", "+", "-", "*", "/", "%")
 
 
+# Literals that Robot evaluates to a FALSY Python value: Should Be True on one of
+# these CAN fail, so it is a real (if odd) oracle, not the always-true R6 smell.
+_FALSY_LITERALS = {"0", "0.0", "false", "none", '""', "''"}
+
+
 def _is_string_literal_truthy(arg):
     """True for a Should Be True argument that is a non-empty string LITERAL with no
     expression operators and no variable - it is always truthy, so the check can
     never fail (RF17). A bare ${x} is C6 (truthiness), not this; an expression like
-    `${n} > 0` is a real oracle and not flagged."""
+    `${n} > 0` is a real oracle and not flagged; a falsy literal (0/False/None) can
+    fail and is not flagged either."""
     s = (arg or "").strip()
     if not s:
         return False
@@ -344,7 +364,9 @@ def _is_string_literal_truthy(arg):
         return False
     if any(tok in s for tok in _EXPR_TOKENS):
         return False                   # real expression (comparison, call, boolean)
-    return True                        # plain non-empty text: always truthy
+    if _norm(s) in _FALSY_LITERALS:
+        return False                   # falsy literal: the check can still fail
+    return True                        # plain non-empty truthy text: always truthy
 
 
 def _body_has_executable(node):
@@ -440,6 +462,10 @@ def _dead_verification_after_terminator(node):
             terminated = True
         elif cls == "KeywordCall" and _norm(item.keyword) in TERMINATOR_KEYWORDS:
             terminated = True
+        elif cls == "KeywordCall" and _norm(item.keyword) in CONDITIONAL_TERMINATOR_KEYWORDS:
+            guard = next(iter(getattr(item, "args", []) or []), "")
+            if _norm(guard) in _CONST_TRUE_GUARDS:
+                terminated = True
         # Recurse into control blocks (their own bodies are scanned independently).
         if hasattr(item, "body") and cls in ("If", "For", "While", "Try"):
             yield from _dead_verification_after_terminator(item)
@@ -523,7 +549,8 @@ def _call_level_smells(file, owner, calls, findings):
             has_verification = True
             continue
         if _norm(kw) == "run keyword and expect error" and args \
-                and _CATCH_ALL_ERROR_RE.match((args[0] or "").strip()):
+                and (_CATCH_ALL_ERROR_RE.match((args[0] or "").strip())
+                     or _CATCH_ALL_REGEXP_RE.match((args[0] or "").strip())):
             findings.append(Finding(file, ln, owner, "C9", "expects any error (catch-all pattern)"))
             has_verification = True
             continue

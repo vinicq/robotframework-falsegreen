@@ -899,6 +899,23 @@ Weak
     assert "C6" in cs and "R6" not in cs
 
 
+def test_no_r6_for_falsy_literal(tmp_path):
+    # FINDING C: a falsy literal (0 / False / None) is NOT always truthy - the
+    # Should Be True check can fail, so it is not a vacuous oracle. No R6.
+    body = """\
+*** Test Cases ***
+Zero Literal
+    Should Be True    0
+
+False Literal
+    Should Be True    False
+
+None Literal
+    Should Be True    None
+"""
+    assert "R6" not in codes(tmp_path, body)
+
+
 # C9: Run Keyword And Expect Error with a catch-all pattern.
 
 def test_c9_expect_error_catch_all_star(tmp_path):
@@ -924,6 +941,71 @@ def test_no_c9_when_expect_error_pattern_is_specific(tmp_path):
 *** Test Cases ***
 Expects A Specific Error
     Run Keyword And Expect Error    ValueError: bad input    Do Risky Thing
+"""
+    assert "C9" not in codes(tmp_path, body)
+
+
+def test_no_c9_when_expect_error_equals_a_specific_message(tmp_path):
+    # FINDING A: EQUALS:<msg> matches the literal message <msg>, not any error.
+    # EQUALS:* matches the literal string "*", a specific message - not a catch-all.
+    body = """\
+*** Test Cases ***
+Expects The Exact Message
+    Run Keyword And Expect Error    EQUALS:Boom    Do Risky Thing
+"""
+    assert "C9" not in codes(tmp_path, body)
+
+
+def test_no_c9_when_expect_error_starts_with_a_specific_prefix(tmp_path):
+    # FINDING A: STARTS:<prefix> is a specific matcher, not a catch-all.
+    body = """\
+*** Test Cases ***
+Expects A Prefix
+    Run Keyword And Expect Error    STARTS:Boom    Do Risky Thing
+"""
+    assert "C9" not in codes(tmp_path, body)
+
+
+def test_no_c9_when_expect_error_equals_a_literal_star(tmp_path):
+    # FINDING A: EQUALS:* matches the LITERAL string "*" (a specific message),
+    # not any error. Only a bare * / GLOB:* / all-star pattern is the catch-all.
+    body = """\
+*** Test Cases ***
+Expects The Literal Star Message
+    Run Keyword And Expect Error    EQUALS:*    Do Risky Thing
+"""
+    assert "C9" not in codes(tmp_path, body)
+
+
+def test_c9_expect_error_regexp_catch_all(tmp_path):
+    # A REGEXP catch-all (.* / .+ / ^.*$) matches any message, so the oracle is
+    # vacuous just like the glob star - C9.
+    for pat in ("REGEXP:.*", "REGEXP:.+", "REGEXP:^.*$", "REGEXP:(.*)", "REGEXP:.*?"):
+        body = f"""\
+*** Test Cases ***
+Expects Any Error Via Regex
+    Run Keyword And Expect Error    {pat}    Do Risky Thing
+"""
+        assert "C9" in codes(tmp_path, body), pat
+
+
+def test_no_c9_when_expect_error_regexp_is_specific(tmp_path):
+    # A specific regex (anchored to a real message) is a real oracle, not a catch-all.
+    body = """\
+*** Test Cases ***
+Expects A Specific Error
+    Run Keyword And Expect Error    REGEXP:ValueError: .*    Do Risky Thing
+"""
+    assert "C9" not in codes(tmp_path, body)
+
+
+def test_no_c9_when_bare_dot_star_is_glob(tmp_path):
+    # A bare `.*` (no REGEXP: prefix) is glob, where `.` is literal, so it only
+    # matches messages starting with a dot - not a catch-all.
+    body = """\
+*** Test Cases ***
+Glob Dot Star
+    Run Keyword And Expect Error    .*    Do Risky Thing
 """
     assert "C9" not in codes(tmp_path, body)
 
@@ -969,6 +1051,92 @@ Bails Out
     Should Be Equal    ${a}    ${b}
 """
     assert "C20" in codes(tmp_path, body, name="kw.resource")
+
+
+def test_no_c20_when_fail_is_conditional_via_run_keyword_if(tmp_path):
+    # FINDING B: a Fail guarded by Run Keyword If is conditional - the later
+    # verification is reached when the condition is false, so it is NOT dead.
+    body = """\
+*** Test Cases ***
+Conditional Fail Then Check
+    Run Keyword If    ${cond}    Fail    boom
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" not in codes(tmp_path, body)
+
+
+def test_no_c20_when_fail_is_inside_native_if(tmp_path):
+    # FINDING B: a Fail inside a native IF is conditional; the verification after
+    # the END runs when the branch is not taken, so it is NOT dead.
+    body = """\
+*** Test Cases ***
+Branching Fail Then Check
+    IF    ${cond}
+        Fail    boom
+    END
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" not in codes(tmp_path, body)
+
+
+def test_no_c20_when_return_is_conditional(tmp_path):
+    # FINDING B: Return From Keyword If / Pass Execution If are conditional
+    # terminators - a verification after them still runs when the guard is false.
+    body = """\
+*** Keywords ***
+Bails Conditionally
+    Return From Keyword If    ${cond}    ${x}
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" not in codes(tmp_path, body, name="kw.resource")
+
+
+def test_c20_when_pass_execution_if_guard_is_const_true(tmp_path):
+    # Codex on #20: a `...If` terminator with a constant-true guard (${TRUE}, true,
+    # 1) always fires, so the following verification is dead - C20 must fire.
+    body = """\
+*** Test Cases ***
+Always Passes First
+    Pass Execution If    ${TRUE}    done
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" in codes(tmp_path, body)
+
+
+def test_c20_when_return_from_keyword_if_guard_is_const_true(tmp_path):
+    # Codex on #20: lowercase `true` guard is also always-true; the check after the
+    # forced return is dead.
+    body = """\
+*** Keywords ***
+Bails Always
+    Return From Keyword If    true    ${x}
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" in codes(tmp_path, body, name="kw.resource")
+
+
+def test_no_c20_when_pass_execution_if_guard_is_variable(tmp_path):
+    # The fix must not weaken the conditional case: a variable guard still lets the
+    # verification run when the condition is false, so it is NOT dead.
+    body = """\
+*** Test Cases ***
+Maybe Passes
+    Pass Execution If    ${cond}    skip
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" not in codes(tmp_path, body)
+
+
+def test_c20_after_unconditional_top_level_fail(tmp_path):
+    # FINDING B: a bare top-level Fail is unconditional - the verification after it
+    # is dead, so C20 still fires (the fix must not weaken the real case).
+    body = """\
+*** Test Cases ***
+Always Fails First
+    Fail    stop here
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C20" in codes(tmp_path, body)
 
 
 # C37: duplicate [Template] data row.
