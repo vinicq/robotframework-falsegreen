@@ -170,10 +170,28 @@ def _norm(name):
     return (name or "").strip().lower()
 
 
+def _strip_library_prefix(keyword):
+    """Drop a leading library/resource prefix from a keyword call. Robot allows
+    `LibraryName.Keyword Name` (and aliases, e.g. `api.GET On Session`); the prefix
+    is the text before the LAST `.` of the first token, because keyword base names do
+    not contain `.` while library/resource prefixes do. `RequestsLibrary.GET` -> `GET`,
+    `BuiltIn.Should Be Equal` -> `Should Be Equal`. Only strips when there is a `.` and
+    a non-empty keyword remains after it; otherwise returns the name unchanged."""
+    if not keyword:
+        return keyword
+    first, sep, rest = keyword.partition(" ")
+    if "." in first:
+        base = first.rsplit(".", 1)[1]
+        if base:
+            return base + sep + rest
+    return keyword
+
+
 def is_verification(keyword, args):
     """True if this keyword call verifies an expected result (is an oracle)."""
     if keyword is None:
         return False
+    keyword = _strip_library_prefix(keyword)
     n = _norm(keyword)
     if "should" in n:
         return True                              # BuiltIn/Collections/String/Selenium/...
@@ -199,27 +217,40 @@ def is_verification(keyword, args):
     # runs each keyword in sequence. The verification can be any segment, so split
     # on the AND separator and check each segment's first token as a nested call.
     if n == "run keywords":
-        for kw in _run_keywords_segments(args):
-            if is_verification(kw, []):
+        for seg_kw, seg_args in _run_keywords_segments(args):
+            if is_verification(seg_kw, seg_args):
                 return True
     return False
 
 
 def _run_keywords_segments(args):
-    """Yield the first token (the keyword name) of each segment of a `Run Keywords`
-    argument list, split on the literal `AND` separator. `Click    AND    Should Be
-    Equal    ${a}    ${b}` -> ['Click', 'Should Be Equal']. A chain with no AND is a
-    single keyword followed by its arguments, so only the first token is the call."""
+    """Yield `(keyword_name, [keyword_args])` for each nested call in a `Run Keywords`
+    argument list. Robot runs `Run Keywords` two ways:
+
+    - WITH literal `AND` separators: each `AND`-delimited segment is one call, its
+      first token the keyword name and the rest its arguments. `GET    url
+      expected_status=200    AND    Log    done` ->
+      `('GET', ['url', 'expected_status=200'])`, `('Log', ['done'])`.
+    - WITHOUT any `AND`: Robot runs EACH argument as its own no-arg keyword. `Open
+      Page    Verify Page Loaded` -> `('Open Page', [])`, `('Verify Page Loaded', [])`.
+
+    So the verification can be any segment, with its own arguments (the RequestsLibrary
+    expected_status / Browser `Get ... ==` logic needs them)."""
+    args = list(args or ())
+    if not any(_norm(a) == "and" for a in args):
+        for a in args:
+            yield a, []
+        return
     segment = []
-    for a in args or ():
+    for a in args:
         if _norm(a) == "and":
             if segment:
-                yield segment[0]
+                yield segment[0], segment[1:]
             segment = []
         else:
             segment.append(a)
     if segment:
-        yield segment[0]
+        yield segment[0], segment[1:]
 
 
 def is_swallow(keyword):

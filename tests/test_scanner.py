@@ -1135,3 +1135,92 @@ Chained Actions Only
     Run Keywords    Click    button    AND    Go To    /home
 """
     assert "C2b" in codes(tmp_path, body)
+
+
+# --- Codex review fixes: library prefix + Run Keywords forms ------------------
+
+def test_no_c2b_on_library_prefixed_request_with_expected_status(tmp_path):
+    # FINDING 1: `RequestsLibrary.GET ... expected_status=200` is an oracle. The
+    # library prefix must be stripped before the HTTP-method check, so NOT C2b.
+    body = """\
+*** Settings ***
+Library    RequestsLibrary
+
+*** Test Cases ***
+Prefixed Get Returns 200
+    RequestsLibrary.GET    https://api.example.com/users    expected_status=200
+"""
+    assert "C2b" not in codes(tmp_path, body)
+
+
+def test_no_c2b_on_library_prefixed_should(tmp_path):
+    # FINDING 1: `BuiltIn.Should Be Equal` is a verification once the `BuiltIn.`
+    # prefix is stripped -> NOT C2b.
+    body = """\
+*** Test Cases ***
+Prefixed Assertion
+    Do Something
+    BuiltIn.Should Be Equal    ${a}    ${b}
+"""
+    assert "C2b" not in codes(tmp_path, body)
+
+
+def test_no_c2b_on_resource_prefixed_verifier(tmp_path):
+    # FINDING 1: a verify-prefixed user keyword reached via a resource alias
+    # (`api.Verify Dashboard`) is recognized only after the prefix is stripped -
+    # `api.verify...` does not start with VERIFY_PREFIXES. So NOT C2b.
+    body = """\
+*** Test Cases ***
+Prefixed Verifier
+    Do Login
+    api.Verify Dashboard Loaded
+"""
+    assert "C2b" not in codes(tmp_path, body)
+
+
+def test_no_c2b_when_run_keywords_no_and_has_verifier(tmp_path):
+    # FINDING 2: with no literal AND, Robot runs EACH arg as its own no-arg keyword.
+    # `Verify X` is a verifier user keyword -> the chain verifies -> NOT C2b.
+    body = """\
+*** Test Cases ***
+No And Chain With Verifier
+    Run Keywords    Log    Verify Page Loaded
+"""
+    assert "C2b" not in codes(tmp_path, body)
+
+
+def test_c2b_when_run_keywords_no_and_only_actions(tmp_path):
+    # FINDING 2: no-AND chain of only actions has no oracle -> still C2b.
+    body = """\
+*** Test Cases ***
+No And Chain Actions Only
+    Run Keywords    Open Page    Click Button
+"""
+    assert "C2b" in codes(tmp_path, body)
+
+
+def test_no_c2b_when_run_keywords_and_segment_carries_expected_status(tmp_path):
+    # FINDING 3: the AND segment's own args must reach is_verification, so the
+    # RequestsLibrary expected_status oracle on the GET segment fires -> NOT C2b.
+    body = """\
+*** Settings ***
+Library    RequestsLibrary
+
+*** Test Cases ***
+And Chain With Request Oracle
+    Run Keywords    GET    https://api.example.com/users    expected_status=200    AND    Log    done
+"""
+    assert "C2b" not in codes(tmp_path, body)
+
+
+def test_c2b_when_run_keywords_and_segment_has_no_verifier(tmp_path):
+    # FINDING 3: an AND chain whose segments only act (no oracle) -> still C2b.
+    body = """\
+*** Settings ***
+Library    RequestsLibrary
+
+*** Test Cases ***
+And Chain No Oracle
+    Run Keywords    GET    https://api.example.com/users    AND    Log    done
+"""
+    assert "C2b" in codes(tmp_path, body)
