@@ -161,7 +161,7 @@ Measured against the [Open Catalog of Test Smells](https://test-smell-catalog.re
 Some catalog codes are left out because the gain is not worth the false positives, or because
 another tool already owns them. Listing them is part of the scope:
 
-- **RF16 (`Wait Until Keyword Succeeds`)** — a retry wrapper. Legitimate retry around genuinely
+- **RF16 (`Wait Until Keyword Succeeds`)** - a retry wrapper. Legitimate retry around genuinely
   asynchronous behavior is common and idiomatic, so flagging every use would be mostly noise. The
   false-positive rate is too high for a static rule; this is a judgment call left to review.
 - **Hygiene already covered by [Robocop](https://github.com/MarketSquare/robotframework-robocop)** —
@@ -174,10 +174,10 @@ another tool already owns them. Listing them is part of the scope:
 
 Three Python/JS sibling codes have no clean Robot equivalent and are intentionally skipped:
 
-- **C8 (exact float equality)** — Robot test data is untyped text, so a value cannot be proven to be
+- **C8 (exact float equality)** - Robot test data is untyped text, so a value cannot be proven to be
   a float from the parse tree (`Should Be Equal As Numbers` even takes a `precision` argument). Any
   rule here would guess, with a high false-positive rate.
-- **C18 (compare a stringified value to a literal)** — Robot has no `str()`/`repr()` round-trip
+- **C18 (compare a stringified value to a literal)** - Robot has no `str()`/`repr()` round-trip
   concept; everything is already a string. There is no structural signal to key on.
 
 C9 (broad error assertion) and C20 (dead step after a terminator) *do* have idiomatic Robot forms
