@@ -49,9 +49,18 @@ sources and maps each to the codes it informs.
 | C5, C7 | Redundant/always-true assertion (van Deursen 2001; BuiltIn) |
 | C6 | weak truthiness check on a bare variable (BuiltIn `Should Be True`) |
 | C16 | Sleepy Test (van Deursen 2001) applied to BuiltIn `Sleep` |
+| C9 | broad-exception smell: BuiltIn `Run Keyword And Expect Error` with a catch-all pattern (`*`/`GLOB:*`/`REGEXP:.*`) accepts any error |
+| C20, R7 | Rotten Green Tests (Delplanque 2019): a step after a terminator never runs; a templated case with no in-file verification has no oracle |
 | C21, R2 | Rotten Green Tests (Delplanque 2019): assertion present but unreachable or hollow |
+| C23 | Mystery Guest (van Deursen 2001) applied to a hard-coded IP-address URL in test data |
+| C37 | duplicate `[Template]` data row (consolidated catalog; duplicate-case) |
+| CC | commented-out verification keyword: the oracle is switched off (van Deursen 2001) |
 | C32 | BuiltIn `Skip` / `robot:skip` tag |
 | R1 | BuiltIn `Pass Execution` (forced green) |
+| R3 | `*** Test Cases ***` in a `.resource` file (Robot Framework User Guide: the cases never run) |
+| R4 | `No Operation` as the only step (Empty Test, van Deursen 2001) |
+| R5 | `[Template]` with no data rows: zero-case generation (mirrors C45 / JS22) |
+| R6 | `Should Be True` on a string literal: a non-empty string is always truthy (BuiltIn) |
 | D2 | test-level control flow (Robot Framework User Guide) |
 | M2 | long test / too many steps (style guidance) |
 
