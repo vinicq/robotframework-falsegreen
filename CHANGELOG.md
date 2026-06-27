@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-27
+
+### Fixed
+- C9 no longer treats EQUALS:* / STARTS:* as catch-alls and now flags the regex catch-all REGEXP:.*; the registry message was corrected (#41).
+- C20: Pass Execution If / Return From Keyword If count as terminators only with a constant-true guard; R6 excludes falsy literals (#41).
+- An in-file dotted keyword (e.g. api.GET) is a local keyword and is not prefix-stripped into a library call (#43).
+
+
 ### Added
 
 - **R7** (low): a templated test whose `[Template]` keyword is a user keyword defined in the
