@@ -7,6 +7,7 @@ from falsegreen_robot.scanner import (
     _render_text, CASES, FIX_HINTS,
     render_sarif, render_junit, render_json, _sarif_level,
     fingerprint, load_baseline, write_baseline,
+    _strip_library_prefix, is_verification,
 )
 
 
@@ -1008,6 +1009,53 @@ Glob Dot Star
     Run Keyword And Expect Error    .*    Do Risky Thing
 """
     assert "C9" not in codes(tmp_path, body)
+
+
+# C9 / prefix: an in-file dotted keyword is a LOCAL keyword and must not be stripped.
+
+def test_strip_library_prefix_keeps_local_dotted_keyword(tmp_path):
+    # A name that is a locally-defined keyword keeps its dotted form; anything else is
+    # stripped of its library prefix as before.
+    local = {"api.get"}
+    assert _strip_library_prefix("api.GET", local) == "api.GET"
+    assert _strip_library_prefix("RequestsLibrary.GET", local) == "GET"
+    assert _strip_library_prefix("api.GET", None) == "GET"
+
+
+def test_is_verification_local_dotted_keyword_not_read_as_http_method(tmp_path):
+    # Without the local-keyword set, api.GET strips to GET and reads as a RequestsLibrary
+    # status assertion. With it, the local keyword wins and is not an oracle by name.
+    args = ["expected_status=200"]
+    assert is_verification("api.GET", args) is True            # stripped -> GET
+    assert is_verification("api.GET", args, {"api.get"}) is False
+
+
+def test_c2b_when_only_call_is_local_dotted_keyword_no_oracle(tmp_path):
+    # api.GET is defined in this file (a local keyword), so calling it with
+    # expected_status must NOT be mistaken for RequestsLibrary's GET status assertion.
+    # The keyword does not verify, so the test has no oracle -> C2b. Before the fix the
+    # over-strip credited a phantom verification and masked this.
+    body = """\
+*** Keywords ***
+api.GET
+    Log    just an action, no oracle
+
+*** Test Cases ***
+Calls A Local Dotted Keyword
+    api.GET    expected_status=200
+"""
+    assert "C2b" in codes(tmp_path, body)
+
+
+def test_real_requests_library_get_still_recognized(tmp_path):
+    # Regression guard: a genuine RequestsLibrary GET with expected_status is still an
+    # oracle (no local keyword shadows it), so no C2b.
+    body = """\
+*** Test Cases ***
+Real Http Status Assertion
+    RequestsLibrary.GET    https://api.example.com/health    expected_status=200
+"""
+    assert "C2b" not in codes(tmp_path, body)
 
 
 # C20: verification after a terminator ([Return]/Fail/Return From Keyword).

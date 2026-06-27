@@ -184,14 +184,22 @@ def _norm(name):
     return (name or "").strip().lower()
 
 
-def _strip_library_prefix(keyword):
+def _strip_library_prefix(keyword, local_keywords=None):
     """Drop a leading library/resource prefix from a keyword call. Robot allows
     `LibraryName.Keyword Name` (and aliases, e.g. `api.GET On Session`); the prefix
     is the text before the LAST `.` of the first token, because keyword base names do
     not contain `.` while library/resource prefixes do. `RequestsLibrary.GET` -> `GET`,
     `BuiltIn.Should Be Equal` -> `Should Be Equal`. Only strips when there is a `.` and
-    a non-empty keyword remains after it; otherwise returns the name unchanged."""
+    a non-empty keyword remains after it; otherwise returns the name unchanged.
+
+    A keyword defined IN THIS FILE takes priority over an imported library: Robot
+    resolves a local keyword before a resource/library one. So when the full name is a
+    locally-defined keyword (`local_keywords`, normalized), the dotted name is the real
+    keyword (e.g. an in-file `api.GET`), not a `LibraryName.Keyword`, and must NOT be
+    stripped - otherwise `api.GET` would be misread as RequestsLibrary's `GET`."""
     if not keyword:
+        return keyword
+    if local_keywords and _norm(keyword) in local_keywords:
         return keyword
     first, sep, rest = keyword.partition(" ")
     if "." in first:
@@ -201,11 +209,11 @@ def _strip_library_prefix(keyword):
     return keyword
 
 
-def is_verification(keyword, args):
+def is_verification(keyword, args, local_keywords=None):
     """True if this keyword call verifies an expected result (is an oracle)."""
     if keyword is None:
         return False
-    keyword = _strip_library_prefix(keyword)
+    keyword = _strip_library_prefix(keyword, local_keywords)
     n = _norm(keyword)
     if "should" in n:
         return True                              # BuiltIn/Collections/String/Selenium/...
@@ -232,7 +240,7 @@ def is_verification(keyword, args):
     # on the AND separator and check each segment's first token as a nested call.
     if n == "run keywords":
         for seg_kw, seg_args in _run_keywords_segments(args):
-            if is_verification(seg_kw, seg_args):
+            if is_verification(seg_kw, seg_args, local_keywords):
                 return True
     return False
 
@@ -444,7 +452,7 @@ def _try_body_has_keyword(try_node):
     return any(type(st).__name__ == "KeywordCall" for st in (getattr(try_node, "body", None) or []))
 
 
-def _dead_verification_after_terminator(node):
+def _dead_verification_after_terminator(node, local_keywords=None):
     """Yield (lineno) for each verification keyword that sits AFTER a terminator in
     the same body block - a [Return]/Return statement, or a Fail/Pass Execution/
     Return From Keyword call. Nothing after the terminator runs, so a check there is
@@ -455,7 +463,7 @@ def _dead_verification_after_terminator(node):
     for item in body:
         cls = type(item).__name__
         if terminated and cls == "KeywordCall" and is_verification(
-                item.keyword, list(getattr(item, "args", []) or [])):
+                item.keyword, list(getattr(item, "args", []) or []), local_keywords):
             yield getattr(item, "lineno", 0) or 0
         # A setting [Return]/ReturnSetting or a Return statement ends the block.
         if cls in ("ReturnSetting", "Return", "ReturnStatement"):
@@ -468,7 +476,7 @@ def _dead_verification_after_terminator(node):
                 terminated = True
         # Recurse into control blocks (their own bodies are scanned independently).
         if hasattr(item, "body") and cls in ("If", "For", "While", "Try"):
-            yield from _dead_verification_after_terminator(item)
+            yield from _dead_verification_after_terminator(item, local_keywords)
 
 
 def _duplicate_template_rows(testcase):
@@ -520,7 +528,7 @@ def _name_implies_verification(name):
     return "should" in n or n.startswith(("verify", "assert", "validate"))
 
 
-def _call_level_smells(file, owner, calls, findings):
+def _call_level_smells(file, owner, calls, findings, local_keywords=None):
     """Per-call false-green checks shared by test cases, tasks, and user keywords:
     C5 (always-true), C7 (self-compare), C16 (Sleep). Returns whether any keyword
     call verifies something."""
@@ -562,12 +570,12 @@ def _call_level_smells(file, owner, calls, findings):
             continue
         if _norm(kw) == "sleep":
             findings.append(Finding(file, ln, owner, "C16"))
-        if is_verification(kw, args) or _rkif_verifies(c):
+        if is_verification(kw, args, local_keywords) or _rkif_verifies(c):
             has_verification = True
     return has_verification
 
 
-def analyze_keyword(file, kw, findings):
+def analyze_keyword(file, kw, findings, local_keywords=None):
     """Analyze a User Keyword definition (.robot Keywords section or .resource).
     Flags call-level smells inside the body, and R2 when the keyword is named like a
     verifier but verifies nothing (a hollow oracle used by tests)."""
@@ -586,11 +594,11 @@ def analyze_keyword(file, kw, findings):
         findings.append(Finding(file, line, name, "R4"))
         return
 
-    has_verification = _call_level_smells(file, name, calls, findings)
+    has_verification = _call_level_smells(file, name, calls, findings, local_keywords)
 
     # C20: a verification after a [Return]/Return/Fail/Return From Keyword in the
     # same block is dead - it never runs.
-    for dead_ln in _dead_verification_after_terminator(kw):
+    for dead_ln in _dead_verification_after_terminator(kw, local_keywords):
         findings.append(Finding(file, dead_ln, name, "C20",
                                 "verification after a terminator never runs"))
 
@@ -604,12 +612,12 @@ def analyze_keyword(file, kw, findings):
         findings.append(Finding(file, line, name, "R2"))
 
 
-def _keyword_body_verifies(kw):
+def _keyword_body_verifies(kw, local_keywords=None):
     """True if a user keyword definition's body contains any verification keyword.
     Runs the shared call-level scan over the body and discards its findings - only
     the has_verification verdict matters here (used by R7)."""
     calls = list(_keyword_calls(kw))
-    return _call_level_smells("", "", calls, [])
+    return _call_level_smells("", "", calls, [], local_keywords)
 
 
 def analyze_testcase(file, tc, findings, keyword_index=None):
@@ -617,6 +625,9 @@ def analyze_testcase(file, tc, findings, keyword_index=None):
     line = getattr(tc, "lineno", 0) or 0
     calls = list(_keyword_calls(tc))
     tags = [_norm(t) for t in _tags(tc)]
+    # In-file keyword names (normalized) take priority over imported libraries, so a
+    # dotted local keyword (api.GET) must not be prefix-stripped into a library call.
+    local_keywords = set(keyword_index) if keyword_index else None
 
     # C32: skipped
     if any("robot:skip" in t for t in tags) or any(_norm(c.keyword) in ("skip",) for c in calls):
@@ -652,7 +663,7 @@ def analyze_testcase(file, tc, findings, keyword_index=None):
         # already flags the hollow oracle on the definition).
         elif keyword_index is not None and tmpl_kw in keyword_index:
             kw_def = keyword_index[tmpl_kw]
-            if (not _keyword_body_verifies(kw_def)
+            if (not _keyword_body_verifies(kw_def, local_keywords)
                     and not _name_implies_verification(getattr(kw_def, "name", "") or "")):
                 findings.append(Finding(file, line, name, "R7",
                                         "in-file [Template] keyword verifies nothing"))
@@ -676,7 +687,7 @@ def analyze_testcase(file, tc, findings, keyword_index=None):
         findings.append(Finding(file, line, name, "R4"))
         return
 
-    has_verification = _call_level_smells(file, name, calls, findings)
+    has_verification = _call_level_smells(file, name, calls, findings, local_keywords)
 
     # diagnostic/coupling group (off by default; emitted always, filtered in scan)
     if _has_control_block(tc):
@@ -686,7 +697,7 @@ def analyze_testcase(file, tc, findings, keyword_index=None):
 
     # C20: a verification keyword after a terminator ([Return]/Fail/Pass Execution/
     # Return From Keyword) in the same block is a dead step - it never runs.
-    for dead_ln in _dead_verification_after_terminator(tc):
+    for dead_ln in _dead_verification_after_terminator(tc, local_keywords):
         findings.append(Finding(file, dead_ln, name, "C20",
                                 "verification after a terminator never runs"))
 
@@ -721,7 +732,7 @@ def analyze_testcase(file, tc, findings, keyword_index=None):
     # explicit: no if/else/for at the test-case level.
     top = _top_level_keyword_calls(tc)
     has_unconditional = any(
-        is_verification(c.keyword, list(getattr(c, "args", []) or []))
+        is_verification(c.keyword, list(getattr(c, "args", []) or []), local_keywords)
         for c in top
         if _norm(c.keyword) not in ("run keyword if", "run keyword unless")
     )
@@ -796,6 +807,9 @@ def analyze_file(path):
                 keyword_index[nm] = node
 
     _KwIndex().visit(model)
+    # Normalized names of every keyword defined in this file: a local keyword wins
+    # over an imported library, so these names are not prefix-stripped.
+    local_keywords = set(keyword_index) if keyword_index else None
 
     class _V(ModelVisitor):
         def visit_TestCase(self, node):
@@ -807,7 +821,7 @@ def analyze_file(path):
                 analyze_testcase(path, node, self_findings, keyword_index)
 
         def visit_Keyword(self, node):  # user keyword defs in .robot Keywords + .resource
-            analyze_keyword(path, node, self_findings)
+            analyze_keyword(path, node, self_findings, local_keywords)
 
     _V().visit(model)
 
