@@ -7,7 +7,6 @@ analyze_file returns every finding, including the off-by-default diagnostic
 group, so one pass covers default and opt-in codes. The robot scanner only reads
 .robot/.resource files, so this .py test is never self-scanned.
 """
-import glob
 import os
 
 import pytest
