@@ -195,6 +195,11 @@ Three Python/JS sibling codes have no clean Robot equivalent and are intentional
   rule here would guess, with a high false-positive rate.
 - **C18 (compare a stringified value to a literal)** - Robot has no `str()`/`repr()` round-trip
   concept; everything is already a string. There is no structural signal to key on.
+- **C48 (dark patch: flip a test-mode flag, then assert)** - Robot has a shape for it
+  (`Set Environment Variable    TESTING    true` / `Set Global Variable` then a verification),
+  but Robot test data is untyped text: the parse tree cannot prove a variable name is a
+  test-mode flag, and a truthy value is just a string. Detecting it would need variable-lifecycle
+  tracking with no clean signal, so the false-positive ceiling is too high. Skipped on purpose.
 
 C9 (broad error assertion) and C20 (dead step after a terminator) *do* have idiomatic Robot forms
 (`Run Keyword And Expect Error    *` and a verification after `[Return]`/`Fail`), so both are

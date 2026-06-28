@@ -16,6 +16,20 @@ All notable changes to this project are documented here. The format is based on
   Should Be Equal ...`: `is_verification` now peeks inside the retry wrapper and recurses
   on the inner keyword, so retrying a real assertion counts as an oracle. Retrying a bare
   action (`... Click ...`) still has no oracle and stays flagged (#46).
+- `CC` no longer fires on prose comments that merely start with a verification verb
+  (`# Validate that...`, `# Should we keep this?`): the verb must be followed by a keyword-call
+  shape - more capitalized name words then a `\s{2,}`/tab arg separator, a `${`/`@{`/`&{`
+  variable, or end-of-line. `# Should Be Equal    ${a}    ${b}` and `# Verify Login` still fire (#61).
+- Inline `ignore[code]` is now case-insensitive: `ignore[c16]` suppresses the `C16` a finding
+  carries (bracket codes are upper-cased on parse). Mirrors the Python sibling (#62).
+- An inline `# falsegreen: ignore` on a continuation (`...`) row is now folded onto the owning
+  statement's first physical line, where the finding is reported, so the suppression applies (#64).
+
+### Docs
+- README documents why Robot has no `C48` (dark-patch): untyped test data means a variable cannot
+  be proven to be a test-mode flag from the parse tree, so the false-positive ceiling is too high (#66).
+- Added the `PL9` row to the CREDITS code-to-source map; fixed the CHANGELOG footer compare
+  links (`[0.3.0]`, and `[Unreleased]` now diffs from v0.3.0) (#65).
 
 ## [0.3.0] - 2026-06-27
 
@@ -148,6 +162,7 @@ All notable changes to this project are documented here. The format is based on
   `Verify*`/`Assert*`/`Validate*`/`Check *` keywords.
 - CLI: paths, `--json`, `--disable`, `--version`. Exit codes 0/10/20.
 
-[Unreleased]: https://github.com/vinicq/robotframework-falsegreen/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/vinicq/robotframework-falsegreen/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/vinicq/robotframework-falsegreen/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/vinicq/robotframework-falsegreen/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/vinicq/robotframework-falsegreen/releases/tag/v0.1.0

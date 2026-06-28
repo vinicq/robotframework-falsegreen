@@ -61,6 +61,7 @@ sources and maps each to the codes it informs.
 | R4 | `No Operation` as the only step (Empty Test, van Deursen 2001) |
 | R5 | `[Template]` with no data rows: zero-case generation (mirrors C45 / JS22) |
 | R6 | `Should Be True` on a string literal: a non-empty string is always truthy (BuiltIn) |
+| PL9 | run-config `--skiponfailure` / `--noncritical`: a failing test reported as a non-fatal pass (legacy run option, removed in RF 4+) |
 | D2 | test-level control flow (Robot Framework User Guide) |
 | M2 | long test / too many steps (style guidance) |
 

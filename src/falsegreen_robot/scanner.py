@@ -760,8 +760,10 @@ def analyze_testcase(file, tc, findings, keyword_index=None):
 _CC_RE = re.compile(
     r"""^\s*\#\s*
         (?:\.{3}\s*)?                       # a Robot line-continuation comment
-        (?:[A-Z][A-Za-z0-9]*(?:\ [A-Z][A-Za-z0-9]*){0,2}\ )?  # 0-3 capitalized prefix words
-        (?:Should|Verify|Assert|Validate)\b
+        (?:[A-Z][A-Za-z0-9]*\ ){0,2}        # 0-2 capitalized prefix words (Page, Element)
+        (?:Should|Verify|Assert|Validate)   # the verification verb
+        (?:\ [A-Z][A-Za-z0-9]*)*            # 0+ more capitalized words: rest of the keyword name
+        (?:\s{2,}|\t|\ ?[$@&]\{|\s*$)       # then a call shape: 2+space/tab arg sep, a ${/@{/&{ var, or EOL
     """,
     re.VERBOSE,
 )
@@ -784,14 +786,30 @@ IGNORE_RE = re.compile(r"#\s*falsegreen:\s*ignore(?:\[([A-Za-z0-9, ]+)\])?")
 
 
 def parse_inline_ignores(source):
-    """Map line number -> set of codes to suppress on that line, or {'*'} for all."""
+    """Map line number -> set of codes to suppress on that line, or {'*'} for all.
+    Codes are upper-cased so `ignore[c16]` matches the `C16` a finding carries (#62).
+    A suppression on a continuation (`...`) row is also folded onto the owning
+    statement's first physical line, where the finding is actually reported (#64)."""
+    lines = source.splitlines()
     ignores = {}
-    for i, line in enumerate(source.splitlines(), start=1):
+
+    def add(ln, codeset):
+        ignores.setdefault(ln, set()).update(codeset)
+
+    for i, line in enumerate(lines, start=1):
         m = IGNORE_RE.search(line)
         if not m:
             continue
         codes = m.group(1)
-        ignores[i] = {c.strip() for c in codes.split(",") if c.strip()} if codes else {"*"}
+        codeset = {c.strip().upper() for c in codes.split(",") if c.strip()} if codes else {"*"}
+        add(i, codeset)
+        if line.lstrip().startswith("..."):
+            # Walk back over preceding continuation rows to the statement that owns them.
+            k = i - 2  # 0-based index of the line above
+            while k >= 0 and lines[k].lstrip().startswith("..."):
+                k -= 1
+            if k >= 0:
+                add(k + 1, codeset)
     return ignores
 
 

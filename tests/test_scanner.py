@@ -180,6 +180,30 @@ Sleepy
     assert "C16" in codes(tmp_path, body)
 
 
+def test_inline_ignore_is_case_insensitive(tmp_path):
+    # A lowercase code in the bracket suppresses the same upper-cased finding (#62).
+    body = """\
+*** Test Cases ***
+Sleepy
+    Sleep    1s    # falsegreen: ignore[c16]
+    Should Be Equal    ${a}    1
+"""
+    assert "C16" not in codes(tmp_path, body)
+
+
+def test_inline_ignore_on_a_continuation_line_suppresses_the_owning_call(tmp_path):
+    # The finding is reported on the call's first physical line, but the ignore sits on
+    # a wrapped (...) row; the suppression is folded onto the owning line (#64).
+    body = """\
+*** Test Cases ***
+Wrapped
+    Sleep
+    ...    1 minute    # falsegreen: ignore[C16]
+    Should Be Equal    ${a}    1
+"""
+    assert "C16" not in codes(tmp_path, body)
+
+
 def test_c2b_not_flagged_on_expected_status_on_session(tmp_path):
     # The "On Session" form carries expected_status too.
     body = """\
@@ -281,6 +305,52 @@ Forced
     Should Be Equal    ${a}    ${b}
 """
     assert "R1" in codes(tmp_path, body)
+
+
+# --- #65: CLEAN look-alikes (the smell's opposite must stay quiet) ----------
+
+def test_no_c5_no_c7_for_distinct_arg_should_be_equal(tmp_path):
+    # Two distinct operands: a real equality check, neither always-true nor self-compare.
+    body = """\
+*** Test Cases ***
+Real Check
+    Should Be Equal    ${actual}    ${expected}
+"""
+    found = codes(tmp_path, body)
+    assert "C5" not in found
+    assert "C7" not in found
+
+
+def test_no_c5_for_should_be_true_with_a_real_expression(tmp_path):
+    # Should Be True with a real comparison is a genuine check, not a tautology.
+    body = """\
+*** Test Cases ***
+Real Condition
+    Should Be True    ${count} > 0
+"""
+    assert "C5" not in codes(tmp_path, body)
+
+
+def test_no_c32_for_a_test_without_skip_tag(tmp_path):
+    # A normal tag is not a skip directive.
+    body = """\
+*** Test Cases ***
+Runs Normally
+    [Tags]    smoke
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C32" not in codes(tmp_path, body)
+
+
+def test_no_r1_for_a_test_with_real_checks_and_no_pass_execution(tmp_path):
+    # No Pass Execution: the verification actually decides the verdict.
+    body = """\
+*** Test Cases ***
+Honest
+    Do Something
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "R1" not in codes(tmp_path, body)
 
 
 def test_c3_native_try_except_swallows(tmp_path):
@@ -1332,6 +1402,31 @@ Plain Comment
     Should Be Equal    ${a}    ${b}
 """
     assert "CC" not in codes(tmp_path, body)
+
+
+@pytest.mark.parametrize("prose", [
+    "# Validate that the user sees the page",
+    "# Verify the deploy worked",
+    "# Should we keep this test?",
+    "# Assert nothing here, just a note",
+])
+def test_no_cc_for_prose_starting_with_a_verification_verb(tmp_path, prose):
+    # A verb at the start of prose is not a commented-out keyword call: the verb must
+    # be followed by a call shape (capitalized name + arg separator / variable / EOL),
+    # not a lowercase prose continuation (#61).
+    body = "*** Test Cases ***\nProse\n    %s\n    Should Be Equal    ${a}    ${b}\n" % prose
+    assert "CC" not in codes(tmp_path, body)
+
+
+@pytest.mark.parametrize("call", [
+    "# Should Be Equal    ${a}    ${b}",
+    "# Verify Login",
+    "# Element Should Be Visible",
+])
+def test_cc_still_fires_for_a_commented_keyword_call(tmp_path, call):
+    # A real commented-out verification keyword (name then args/EOL) still fires (#61).
+    body = "*** Test Cases ***\nOff\n    Do Something\n    %s\n    Log    done\n" % call
+    assert "CC" in codes(tmp_path, body)
 
 
 def test_new_codes_in_catalog_and_fix_hints():
