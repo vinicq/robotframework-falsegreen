@@ -41,7 +41,7 @@ CASES = {
     "C20": ("verification after a [Return]/Return/Fail/Pass Execution in the same block — dead step that never runs", "high", "J1"),
     "C37": ("duplicate data row in a [Template] — the same scenario runs twice, adds no coverage", "low", "J4"),
     "CC":  ("commented-out verification keyword (# Should Be Equal ...) — the oracle is switched off", "low", "J1"),
-    "C16": ("Sleep used as synchronization (result depends on timing)", "low", "J1"),
+    "C16": ("non-deterministic source: Sleep, a clock read (Get Current Date), or randomness (Generate Random String / Evaluate datetime|random|uuid)", "low", "J1"),
     "C23": ("hard-coded IP-address URL in test data (environment coupling / mystery guest)", "low", "J6"),
     "C21": ("verification only runs conditionally (inside IF / Run Keyword If) — it may never execute", "low", "J1"),
     "C32": ("skipped test (robot:skip / Skip) never runs", "low", "J1"),
@@ -345,6 +345,11 @@ _BARE_VAR_RE = re.compile(r"^[\$@&]\{[^{}]+\}$")
 # A URL whose host is a literal IP address: strong signal of environment coupling
 # (the test points at a fixed machine). A hostname URL is too common in E2E to flag.
 _IP_URL_RE = re.compile(r"https?://\d{1,3}(?:\.\d{1,3}){3}\b")
+# An `Evaluate` body that reaches for the clock or randomness (module access, so a
+# variable like `random_seed` is not matched): datetime./random./uuid. (C16).
+# Ceiling: keys on the `module.` substring, so it would also match the same text inside
+# a string literal (`Evaluate    'datetime.now'`) — implausible in practice, accepted.
+_EVAL_NONDET_RE = re.compile(r"\b(?:datetime|random|uuid)\.")
 # Body item types that actually do something (vs. settings like [Documentation]).
 _EXECUTABLE_TYPES = {"KeywordCall", "If", "For", "While", "Try", "Var",
                      "ReturnStatement", "Return", "TemplateArguments"}
@@ -577,8 +582,17 @@ def _call_level_smells(file, owner, calls, findings, local_keywords=None):
                 findings.append(Finding(file, ln, owner, code, "both sides are identical"))
             has_verification = True
             continue
-        if _norm(kw) == "sleep":
+        # Strip a library prefix so the idiomatic DateTime.Get Current Date /
+        # String.Generate Random String / BuiltIn.Sleep forms still match (#63).
+        nk = _norm(_strip_library_prefix(kw, local_keywords))
+        if nk == "sleep":
             findings.append(Finding(file, ln, owner, "C16"))
+        elif nk == "get current date":
+            findings.append(Finding(file, ln, owner, "C16", "Get Current Date reads the clock (non-deterministic)"))
+        elif nk == "generate random string":
+            findings.append(Finding(file, ln, owner, "C16", "Generate Random String is non-deterministic (no fixed seed)"))
+        elif nk == "evaluate" and args and _EVAL_NONDET_RE.search(args[0] or ""):
+            findings.append(Finding(file, ln, owner, "C16", "Evaluate body uses datetime/random/uuid (non-deterministic)"))
         if is_verification(kw, args, local_keywords) or _rkif_verifies(c):
             has_verification = True
     return has_verification
