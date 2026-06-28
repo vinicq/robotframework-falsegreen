@@ -103,7 +103,7 @@ RESTinstance schema keywords, DatabaseLibrary `Row Count Should Be Equal`, custo
 | C6  | low  | weak check — `Should Be True` on a bare variable (truthiness only, not a comparison) |
 | C7  | high | self-compare (`Should Be Equal  ${x}  ${x}`) |
 | C9  | low  | `Run Keyword And Expect Error` with a catch-all pattern (`*`, `GLOB:*`) — accepts any error |
-| C16 | low  | `Sleep` used as synchronization (timing dependence) |
+| C16 | low  | non-deterministic source: `Sleep`, a clock read (`Get Current Date`), or randomness (`Generate Random String`, `Evaluate` with `datetime`/`random`/`uuid`) |
 | C20 | high | verification after a `[Return]`/`Return From Keyword`/`Fail`/`Pass Execution` in the same block — a dead step that never runs |
 | C21 | low  | verification only runs conditionally (inside `IF` / `Run Keyword If`) — it may never execute |
 | C23 | low  | hard-coded IP-address URL in test data (`http://10.0.0.5:8080`) — environment coupling |

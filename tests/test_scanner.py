@@ -254,6 +254,34 @@ Sleepy
     assert "C16" in codes(tmp_path, body)
 
 
+@pytest.mark.parametrize("step", [
+    "${d}=    Get Current Date",
+    "${s}=    Generate Random String",
+    "${n}=    Evaluate    datetime.now()",
+    "${r}=    Evaluate    random.randint(1, 9)",
+    "${u}=    Evaluate    uuid.uuid4()",
+    "${d}=    DateTime.Get Current Date",
+    "${s}=    String.Generate Random String",
+])
+def test_c16_broadened_nondeterministic_sources(tmp_path, step):
+    # Same non-determinism family as Sleep: a clock read, a random string, or an
+    # Evaluate body reaching for datetime/random/uuid (#63).
+    body = "*** Test Cases ***\nT\n    %s\n    Should Be Equal    ${a}    ${b}\n" % step
+    assert "C16" in codes(tmp_path, body)
+
+
+@pytest.mark.parametrize("step", [
+    "${x}=    Evaluate    1 + 1",
+    "${x}=    Evaluate    $base_seed + 1",
+    "${n}=    Get Length    ${items}",
+])
+def test_no_c16_for_deterministic_keywords(tmp_path, step):
+    # Plain arithmetic, a variable that merely contains 'seed', and a length read are
+    # deterministic — the Evaluate scan keys on datetime./random./uuid. module access (#63).
+    body = "*** Test Cases ***\nT\n    %s\n    Should Be Equal    ${a}    ${b}\n" % step
+    assert "C16" not in codes(tmp_path, body)
+
+
 def test_c32_skip(tmp_path):
     body = """\
 *** Test Cases ***

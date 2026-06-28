@@ -10,6 +10,10 @@ All notable changes to this project are documented here. The format is based on
 - Inline suppression: `# falsegreen: ignore` on a line silences every code there, and
   `# falsegreen: ignore[C16,C20]` silences only the listed codes. Same token and bracket
   syntax as falsegreen (Python) and falsegreen-js; scoped to the line, exact-token only (#49).
+- `C16` broadened beyond `Sleep` to the rest of the non-determinism family: `Get Current Date`
+  (clock read), `Generate Random String` (randomness), and an `Evaluate` body that reaches for
+  `datetime.`/`random.`/`uuid.` (module access, so a `random_seed` variable is not matched).
+  Parity with the JS `new Date()`/`crypto.*` and Python `uuid`/`secrets` broadening (#63).
 
 ### Fixed
 - `C2b` no longer false-positives on `Wait Until Keyword Succeeds  <retry>  <interval>
