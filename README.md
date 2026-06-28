@@ -19,7 +19,14 @@ Deterministic static scan over the official Robot Framework parser
 [falsegreen-js](https://github.com/vinicq/falsegreen-js) (JS/TS). The semantic,
 intent-based pass lives in [falsegreen-skill](https://github.com/vinicq/falsegreen-skill).
 
-**The falsegreen family:** [falsegreen](https://github.com/vinicq/falsegreen) (Python/pytest) · [falsegreen-js](https://github.com/vinicq/falsegreen-js) (JS/TS) · **robotframework-falsegreen** (Robot Framework) · [falsegreen-skill](https://github.com/vinicq/falsegreen-skill) (semantic LLM pass).
+**The falsegreen family** (install the one for your stack):
+
+| Tool | Stack | Install | Package |
+|---|---|---|---|
+| [falsegreen](https://github.com/vinicq/falsegreen) | Python / pytest | `pip install falsegreen` | [PyPI](https://pypi.org/project/falsegreen/) |
+| [falsegreen-js](https://github.com/vinicq/falsegreen-js) | JS / TS | `npm i -D falsegreen-js` (`npx falsegreen-js`) | [npm](https://www.npmjs.com/package/falsegreen-js) |
+| **robotframework-falsegreen** | Robot Framework | `pip install robotframework-falsegreen` | [PyPI](https://pypi.org/project/robotframework-falsegreen/) |
+| [falsegreen-skill](https://github.com/vinicq/falsegreen-skill) | semantic LLM pass | `npx falsegreen-skill analyze <path>` | [npm](https://www.npmjs.com/package/falsegreen-skill) |
 
 ## Why
 
