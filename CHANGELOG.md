@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-28
+
 ### Added
 - Inline suppression: `# falsegreen: ignore` on a line silences every code there, and
   `# falsegreen: ignore[C16,C20]` silences only the listed codes. Same token and bracket
@@ -35,9 +37,7 @@ All notable changes to this project are documented here. The format is based on
 - Added the `PL9` row to the CREDITS code-to-source map; fixed the CHANGELOG footer compare
   links (`[0.3.0]`, and `[Unreleased]` now diffs from v0.3.0) (#65).
 
-## [0.3.0] - 2026-06-27
-
-### Fixed
+### Fixed (earlier in the 0.3.0 cycle)
 - C9 no longer treats EQUALS:* / STARTS:* as catch-alls and now flags the regex catch-all REGEXP:.*; the registry message was corrected (#41).
 - C20: Pass Execution If / Return From Keyword If count as terminators only with a constant-true guard; R6 excludes falsy literals (#41).
 - An in-file dotted keyword (e.g. api.GET) is a local keyword and is not prefix-stripped into a library call (#43).
