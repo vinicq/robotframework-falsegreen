@@ -20,7 +20,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"  # keep in lockstep with pyproject.toml (test_version_lockstep enforces it)
 TOOL_URI = "https://github.com/vinicq/robotframework-falsegreen"
 
 # --- case catalog. code -> (title, confidence, judgment J1-J6) -------------

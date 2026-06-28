@@ -1528,3 +1528,19 @@ And Chain No Oracle
     Run Keywords    GET    https://api.example.com/users    AND    Log    done
 """
     assert "C2b" in codes(tmp_path, body)
+
+
+def test_version_lockstep():
+    # __version__ must match pyproject.toml; it was stuck at 0.1.0 while the package was 0.3.0,
+    # so --version and the JSON report lied. This guard fails on the next divergence.
+    import re
+    import pathlib
+    from falsegreen_robot.scanner import __version__
+    pyproject = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
+    m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(encoding="utf-8"), re.M)
+    assert m, "version not found in pyproject.toml"
+    cff = pyproject.parent / "CITATION.cff"
+    if cff.exists():
+        cm = re.search(r'^version:\s*([^\s]+)', cff.read_text(encoding="utf-8"), re.M)
+        assert cm and cm.group(1) == m.group(1), "CITATION.cff version out of lockstep with pyproject"
+    assert __version__ == m.group(1), "__version__ %r != pyproject %r" % (__version__, m.group(1))
