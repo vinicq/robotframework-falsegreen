@@ -27,6 +27,15 @@ All notable changes to this project are documented here. The format is based on
   literal by an immediately-preceding `Set Variable`). Two free variables, a runtime-computed
   length, and `Should Be True  ${EMPTY}` (that is `R6`/`C6`) are excluded, and `C44` is
   suppressed where `C5`/`C6`/`R6` already own the line. (#53)
+- `examples/` tree (#48): a worked sample for every emitted code, a BAD case the scanner flags
+  paired with a CLEAN look-alike one token away that it leaves alone. Files are grouped by theme
+  (`effectiveness`, `execution`, `nondeterminism`, `dependency`, `templates`), with
+  `resource_file.resource` for `R3` and `diagnostics.robot` for the opt-in `D2`/`M2` group.
+  `tests/test_examples.py` scans each file with `analyze_file` and asserts every code fires in
+  its file, with a drift guard that fails if a new code lands in the catalog without an example.
+  The self-scan (`python -m falsegreen_robot src tests`) does not include `examples/`. The
+  config-audit-only `PL9` scans the Robot run config rather than a `.robot` file, so it has no
+  test-file example.
 
 ### Changed
 
