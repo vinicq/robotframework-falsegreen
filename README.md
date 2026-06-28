@@ -52,6 +52,22 @@ rffalsegreen --disable C16    # turn off specific codes
 
 Each finding is reported with its pyramid level (unit / integration / e2e, read from the suite's imported libraries) and a one-line fix hint, and the text summary breaks the findings down by level and lists the most common fixes. `--output` takes a file or a directory: an extension-less or trailing-slash path (e.g. `.falsegreen/`) receives `report.<ext>` for the chosen format (`report.sarif`, `report.xml` for JUnit). Reports are run artifacts; keep the output directory gitignored.
 
+### Inline suppression
+
+To silence a single justified finding without disabling the code suite-wide, add a comment on the
+offending line. The token and bracket syntax match falsegreen (Python) and falsegreen-js:
+
+```robotframework
+*** Test Cases ***
+Polls A Real Service
+    Sleep    1s    # falsegreen: ignore[C16]      # silence only C16 on this line
+    Should Be Equal    ${result}    ${expected}
+```
+
+`# falsegreen: ignore` (no brackets) silences every code on that line; `ignore[C16,C20]` silences
+only the listed codes. The suppression is scoped to its line, so a sibling test is unaffected, and
+only the exact `falsegreen:` token suppresses (a plain `# ignore` does not).
+
 ### Baseline (adopt on a suite that already has findings)
 
 To add the scanner to a suite with pre-existing findings without a wall of red, record a baseline and then fail only on new findings:

@@ -121,6 +121,65 @@ def test_is_verification_peeks_inside_wuks():
                            ["5x", "1s", "Click", "id:submit"]) is False
 
 
+# --- inline suppression (#49): # falsegreen: ignore[CODE] -------------------
+
+def test_inline_ignore_specific_code(tmp_path):
+    body = """\
+*** Test Cases ***
+Sleepy
+    Sleep    1s    # falsegreen: ignore[C16]
+    Should Be Equal    ${a}    1
+"""
+    assert "C16" not in codes(tmp_path, body)
+
+
+def test_inline_ignore_bare_silences_all_on_the_line(tmp_path):
+    body = """\
+*** Test Cases ***
+Sleepy
+    Sleep    1s    # falsegreen: ignore
+    Should Be Equal    ${a}    1
+"""
+    assert "C16" not in codes(tmp_path, body)
+
+
+def test_inline_ignore_wrong_code_does_not_suppress(tmp_path):
+    body = """\
+*** Test Cases ***
+Sleepy
+    Sleep    1s    # falsegreen: ignore[C9]
+    Should Be Equal    ${a}    1
+"""
+    assert "C16" in codes(tmp_path, body)
+
+
+def test_inline_ignore_does_not_leak_to_other_tests(tmp_path):
+    body = """\
+*** Test Cases ***
+A
+    Sleep    1s    # falsegreen: ignore[C16]
+    Should Be Equal    ${a}    1
+
+B
+    Sleep    2s
+    Should Be Equal    ${b}    2
+"""
+    found = sorted((f.line, f.code) for f in _findings(tmp_path, body))
+    # The suppressed Sleep is line 3; the sibling Sleep on line 8 still fires C16.
+    assert ("C16" in {c for _, c in found}) and not any(c == "C16" and ln == 3 for ln, c in found)
+
+
+def test_inline_ignore_requires_the_falsegreen_token(tmp_path):
+    # FP guard: a bare "# ignore" without the falsegreen: token does not suppress.
+    body = """\
+*** Test Cases ***
+Sleepy
+    Sleep    1s    # ignore[C16]
+    Should Be Equal    ${a}    1
+"""
+    assert "C16" in codes(tmp_path, body)
+
+
 def test_c2b_not_flagged_on_expected_status_on_session(tmp_path):
     # The "On Session" form carries expected_status too.
     body = """\

@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Inline suppression: `# falsegreen: ignore` on a line silences every code there, and
+  `# falsegreen: ignore[C16,C20]` silences only the listed codes. Same token and bracket
+  syntax as falsegreen (Python) and falsegreen-js; scoped to the line, exact-token only (#49).
+
 ### Fixed
 - `C2b` no longer false-positives on `Wait Until Keyword Succeeds  <retry>  <interval>
   Should Be Equal ...`: `is_verification` now peeks inside the retry wrapper and recurses

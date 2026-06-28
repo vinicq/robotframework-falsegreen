@@ -776,6 +776,25 @@ def _commented_out_verifications(source):
             yield i
 
 
+# Inline suppression: `# falsegreen: ignore` silences every code on that line,
+# `# falsegreen: ignore[C16,C20]` silences only the listed ones. Same token and
+# bracket syntax as falsegreen (Python) and falsegreen-js, so a maintainer learns
+# one form across the ecosystem. Only the exact `falsegreen:` token suppresses.
+IGNORE_RE = re.compile(r"#\s*falsegreen:\s*ignore(?:\[([A-Za-z0-9, ]+)\])?")
+
+
+def parse_inline_ignores(source):
+    """Map line number -> set of codes to suppress on that line, or {'*'} for all."""
+    ignores = {}
+    for i, line in enumerate(source.splitlines(), start=1):
+        m = IGNORE_RE.search(line)
+        if not m:
+            continue
+        codes = m.group(1)
+        ignores[i] = {c.strip() for c in codes.split(",") if c.strip()} if codes else {"*"}
+    return ignores
+
+
 def analyze_file(path):
     findings = []
     try:
@@ -844,6 +863,13 @@ def analyze_file(path):
         source = ""
     for cc_ln in _commented_out_verifications(source):
         self_findings.append(Finding(path, cc_ln, "", "CC", "commented-out verification keyword"))
+
+    # Inline suppression: drop a finding when its line carries a matching
+    # `# falsegreen: ignore` (all codes) or `ignore[CODE,...]` (that code).
+    ignores = parse_inline_ignores(source)
+    if ignores:
+        findings = [f for f in findings
+                    if not (ignores.get(f.line) and ("*" in ignores[f.line] or f.code in ignores[f.line]))]
 
     level = detect_pyramid_level(model)
     for f in findings:
