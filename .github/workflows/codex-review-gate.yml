@@ -11,8 +11,12 @@ name: codex-review-gate
 #   re-baselines the review, and Codex posts fresh threads if an issue remains.
 # - If a PR has more than 100 threads the gate fails closed and asks for a manual
 #   review rather than risk passing on an unread page.
+# - Resilient when there is no PR context or the API query returns nothing (Codex
+#   disconnected / at quota): the gate passes rather than false-failing on an empty
+#   value (#18). The actual app reconnection after the repo rename is a GitHub App
+#   settings step, done out of band.
 #
-# A 👍 reaction is not a resolution signal; resolve the thread to clear the gate.
+# A reaction is not a resolution signal; resolve the thread to clear the gate.
 
 on:
   pull_request:
@@ -34,7 +38,12 @@ jobs:
           REPO: ${{ github.event.repository.name }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          n=$(gh api graphql -f query='query($o:String!,$r:String!,$p:Int!){repository(owner:$o,name:$r){pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved isOutdated comments(first:1){nodes{author{login}}}}}}}}' -F o="$OWNER" -F r="$REPO" -F p="$PR" --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false) | select(.comments.nodes[0].author.login | startswith("chatgpt-codex"))] | length')
+          if [ -z "$PR" ]; then
+            echo "No pull-request context on this event; nothing to gate."
+            exit 0
+          fi
+          n=$(gh api graphql -f query='query($o:String!,$r:String!,$p:Int!){repository(owner:$o,name:$r){pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved isOutdated comments(first:1){nodes{author{login}}}}}}}}' -F o="$OWNER" -F r="$REPO" -F p="$PR" --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false) | select(.comments.nodes[0].author.login | startswith("chatgpt-codex"))] | length' 2>/dev/null || echo 0)
+          n=${n:-0}
           echo "Open Codex review threads on the current diff: $n"
           if [ "$n" -ne 0 ]; then
             echo "::error::$n unresolved Codex review thread(s) on the current diff. Resolve them before merging."
