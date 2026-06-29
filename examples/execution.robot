@@ -1,7 +1,7 @@
 # falsegreen-robot examples - execution (the verification exists but never runs,
 # or the test runs nothing / is forced green).
 #
-# Codes: C2, C2b, C3, C20, C21, C32, CC, R1, R4, R5, R7
+# Codes: C2, C2b, C3, C20, C21, C32, CC, R1, R4, R5, R7, R8, R8b
 #
 # BAD cases are flagged; CLEAN look-alikes stay quiet. The scanner parses the
 # model and never runs these files (see effectiveness.robot for the layout).
@@ -106,6 +106,24 @@ R7 Verifying Template Clean
     [Template]    Verify Sum
     1    2    3
     4    5    9
+
+# --- R8: the only verification is in [Setup] - it checks the wrong phase ----
+R8 Verifies In Setup
+    [Setup]    Should Be Equal    ${precondition}    ready
+    Log    body runs but verifies nothing
+
+R8 Verifies In Body Clean
+    [Setup]    Open Application
+    Should Be Equal    ${result}    ok
+
+# --- R8b: the only verification is in [Teardown] - a separate axis ----------
+R8b Verifies In Teardown
+    Do Something
+    [Teardown]    Verify Cleanup Succeeded
+
+R8b Verifies In Body Clean
+    Should Be Equal    ${result}    ok
+    [Teardown]    Close Application
 
 
 *** Keywords ***

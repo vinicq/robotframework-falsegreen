@@ -6,6 +6,37 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `R8` (high) / `R8b` (low) (#74): the only verification lives in a fixture, not the test
+  body. `R8` fires when a verifying `[Setup]` (or an inherited suite-level `Test Setup`)
+  is the test's sole oracle: it checks preconditions before the body acts, so the body can
+  break and the suite still passes. `R8b` is the `[Teardown]`/`Test Teardown` form, which
+  runs even when the body fails and reports on a separate axis, so it is low. The test's own
+  `[Setup]`/`[Teardown]` overrides the inherited suite fixture. Reuses `is_verification`, so
+  custom and `verify_keywords` oracles still suppress it; only fires on zero body
+  verification.
+- `C9b` (low) (#75): a RequestsLibrary HTTP method (`GET`, `POST`, ... with or without
+  `On Session`) carrying `expected_status=any` or `expected_status=anything`. The request
+  accepts every status, so a 500 never fails the call. The oracle exists but is switched off.
+  Before, this collapsed into a generic `C2b`, conflating "no oracle" with "oracle disabled".
+  Exact match on the disabled values only: a specific code or name stays a real oracle.
+- `C11a` (high) (#76): a self-confirming literal. `${y}=  Set Variable  ${x}` copies the
+  actual into a new variable, then `Should Be Equal  ${x}  ${y}` compares the value against
+  its own copy. The high-precision corner only: the expected side must be a pure in-body copy
+  of a single bare variable. A transform or an independent literal is left alone, and the
+  plain `${x}  ${x}` form stays `C7`.
+
+### Notes
+
+- `C8b` (numeric-tolerance, the Robot analogue of approx-without-tolerance) was evaluated for
+  #76 and skipped, precision-first. On Robot's untyped text every argument is a string token,
+  so there is no static signal that distinguishes a float comparison needing a tolerance from
+  an exact integer compare. `Should Be Equal As Numbers` with the default precision is the
+  idiomatic, correct way to compare numbers, so flagging it would flood every numeric
+  assertion with false positives. No high-precision form exists to ship.
+
+
 ## [0.4.0] - 2026-06-28
 
 ### Added

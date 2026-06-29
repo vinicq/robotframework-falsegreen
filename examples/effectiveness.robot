@@ -1,7 +1,7 @@
 # falsegreen-robot examples - effectiveness (no oracle, a trivial oracle, or the
 # wrong oracle).
 #
-# Codes: C5, C6, C7, C9, C44, R6, R2
+# Codes: C5, C6, C7, C9, C9b, C11a, C44, R6, R2
 #
 # Each BAD case is one the scanner flags; each CLEAN look-alike, one token away,
 # it leaves alone. The scanner parses with robot.api.get_model and never runs
@@ -32,12 +32,30 @@ C7 Self Compare
 C7 Distinct Operands Clean
     Should Be Equal    ${actual}    ${expected}
 
+# --- C11a: expected value is an in-body copy of the actual -----------------
+C11a Self Confirming Literal
+    ${value}=    Get Value From Sut
+    ${expected}=    Set Variable    ${value}
+    Should Be Equal    ${value}    ${expected}
+
+C11a Independent Expected Clean
+    ${value}=    Get Value From Sut
+    ${expected}=    Set Variable    42
+    Should Be Equal    ${value}    ${expected}
+
 # --- C9: Run Keyword And Expect Error with a catch-all pattern -------------
 C9 Catch All Error
     Run Keyword And Expect Error    *    Do Risky Thing
 
 C9 Specific Error Clean
     Run Keyword And Expect Error    ValueError: bad input    Do Risky Thing
+
+# --- C9b: RequestsLibrary expected_status=any disables the oracle ----------
+C9b Status Oracle Disabled
+    GET    https://api.example.com/users    expected_status=any
+
+C9b Specific Status Clean
+    GET    https://api.example.com/users    expected_status=200
 
 # --- C44: library assertion true for any value -----------------------------
 C44 Empty Substring

@@ -128,6 +128,8 @@ RESTinstance schema keywords, DatabaseLibrary `Row Count Should Be Equal`, custo
 | C6  | low  | weak check — `Should Be True` on a bare variable (truthiness only, not a comparison) |
 | C7  | high | self-compare (`Should Be Equal  ${x}  ${x}`) |
 | C9  | low  | `Run Keyword And Expect Error` with a catch-all pattern (`*`, `GLOB:*`) — accepts any error |
+| C9b | low  | RequestsLibrary HTTP method with `expected_status=any`/`anything` — the request accepts every status, so the oracle is disabled (a 500 never fails) |
+| C11a | high | self-confirming literal: the expected value is an in-body copy of the actual (`${y}=  Set Variable  ${x}`, then `Should Be Equal  ${x}  ${y}`) — the oracle confirms itself |
 | C16 | low  | non-deterministic source: `Sleep`, a clock read (`Get Current Date`), or randomness (`Generate Random String`, `Evaluate` with `datetime`/`random`/`uuid`) |
 | C20 | high | verification after a `[Return]`/`Return From Keyword`/`Fail`/`Pass Execution` in the same block — a dead step that never runs |
 | C21 | low  | verification only runs conditionally (inside `IF` / `Run Keyword If`) — it may never execute |
@@ -143,6 +145,8 @@ RESTinstance schema keywords, DatabaseLibrary `Row Count Should Be Equal`, custo
 | R5  | high | `[Template]` with no data rows — the templated test runs zero cases |
 | R6  | low  | `Should Be True` on a string literal (not an expression) — a non-empty string is always truthy, so it never fails |
 | R7  | low  | templated test whose in-file `[Template]` keyword contains no verification — every generated case runs without an oracle (only when the keyword resolves in the same file) |
+| R8  | high | the only verification lives in `[Setup]`/`Test Setup` — it checks preconditions before the body acts, so the body can break and the suite stays green |
+| R8b | low  | the only verification lives in `[Teardown]`/`Test Teardown` — it runs even when the body fails and reports on a separate axis |
 
 Scans `*** Test Cases ***`, `*** Tasks ***` (RPA), and `*** Keywords ***` definitions in
 both `.robot` and `.resource` files. R2 catches the root cause of a missed C2b: a test

@@ -52,6 +52,10 @@ CASES = {
     "R5":  ("[Template] with no data rows — the templated test is generated with zero cases", "high", "J1"),
     "R6":  ("Should Be True on a string literal (not an expression) — a non-empty string is always truthy, so it never fails", "low", "J4"),
     "R7":  ("templated test whose in-file [Template] keyword contains no verification — every generated case runs without an oracle", "low", "J1"),
+    "R8":  ("the only verification lives in [Setup]/Test Setup — it checks preconditions BEFORE the body acts, so the body can break and the suite stays green", "high", "J1"),
+    "R8b": ("the only verification lives in [Teardown]/Test Teardown — it runs even when the body fails and reports on a separate axis", "low", "J1"),
+    "C9b": ("RequestsLibrary HTTP method with expected_status=any/anything — the request accepts every status, so the oracle is disabled (a 500 never fails)", "low", "J1"),
+    "C11a": ("self-confirming literal: the expected value is a copy of the actual (${y}= Set Variable ${x}, then Should Be Equal ${x} ${y}) — the oracle confirms itself", "high", "J2"),
     "C44": ("library assertion provably true for any value (Should Contain ${EMPTY}, Should Not Be Empty ${TRUE}, Length Should Be tautology)", "high", "J2"),
     # --- diagnostic group (maintainability; default off, opt-in via --diagnostics) ---
     "D2":  ("control flow (IF/FOR/WHILE/TRY) at the test/task level — the guide advises against it", "off", "J4"),
@@ -102,6 +106,10 @@ FIX_HINTS = {
     "R5":  "add data rows to the [Template], or remove the template",
     "R6":  "pass a real expression (${x} > 0), not a bare string literal",
     "R7":  "add a verification keyword to the [Template] keyword, or template a verifier",
+    "R8":  "move the verification into the test body so it runs after the SUT acts",
+    "R8b": "verify in the body, not only in [Teardown]; teardown runs on a separate axis",
+    "C9b": "set expected_status to the specific code/name, not any/anything",
+    "C11a": "compare against an independent expected value, not a copy of the actual",
     "C44": "assert a meaningful value, not one always satisfied",
     "D2":  "move control flow into a keyword; keep the test case flat",
     "M2":  "split the long test into focused cases or extract keywords",
@@ -460,6 +468,68 @@ def _vacuous_library_assertion(calls):
                         pass
 
 
+def _expected_status_off_value(args):
+    """Return the disabled expected_status value ('any'/'anything') if an HTTP-method
+    call carries `expected_status=any|anything`, else None. Reuses the exact-match set
+    `_EXPECTED_STATUS_OFF` (a specific code/name stays an oracle, never flagged)."""
+    for a in args or ():
+        key, sep, val = (a or "").partition("=")
+        if sep and _norm(key) == "expected_status" and _norm(val) in _EXPECTED_STATUS_OFF:
+            return _norm(val)
+    return None
+
+
+def _self_confirming_literal(calls):
+    """C11a (#76): a self-confirming literal. `${y}=    Set Variable    ${x}` copies the
+    actual into a new variable, then `Should Be Equal    ${x}    ${y}` (either order)
+    compares the value against its own copy - the oracle confirms itself. Yields the
+    lineno of each such Should Be Equal.
+
+    High-precision corner only: the expected side must be a PURE copy made in-body by a
+    Set Variable of a single bare variable (no transform, no Evaluate, no literal). A
+    transform (Evaluate, a computed value) may carry real meaning and is left alone; the
+    plain `${x}    ${x}` form is already C7. FP bound: both names must resolve to the same
+    source variable through one Set Variable copy, with no intervening reassignment of the
+    copy."""
+    # Map: copy-variable name -> source-variable name, from `${y}= Set Variable ${x}`.
+    # Built in line order; a later reassignment of EITHER the copy or its source drops the
+    # entry, so a snapshot-then-recompute (`${y}=Set Variable ${x}` ... `${x}=Recompute`)
+    # is no longer a self-confirming compare.
+    copies = {}
+    for c in calls:
+        if type(c).__name__ != "KeywordCall":
+            continue
+        is_copy = _norm(getattr(c, "keyword", "")) == "set variable"
+        cargs = list(getattr(c, "args", None) or [])
+        assigned = _assigned_names(c)
+        new_copy = None
+        if is_copy and len(assigned) == 1 and len(cargs) == 1 and _is_bare_variable(cargs[0]):
+            src = {_norm(m.group(1)) for m in _VAR_NAME_RE.finditer(cargs[0])}
+            if len(src) == 1:
+                new_copy = (next(iter(assigned)), next(iter(src)))
+        # Any reassignment invalidates a copy keyed on or sourced from that name, EXCEPT the
+        # Set Variable that creates the copy we are about to record.
+        for name in assigned:
+            for k in [k for k, v in copies.items() if k == name or v == name]:
+                if not (new_copy and k == new_copy[0]):
+                    del copies[k]
+        if new_copy is not None:
+            copies[new_copy[0]] = new_copy[1]
+        if _norm(getattr(c, "keyword", "")) == "should be equal":
+            args = [a for a in (getattr(c, "args", None) or [])
+                    if "=" not in (a or "").split("}")[0]]
+            if len(args) < 2 or not (_is_bare_variable(args[0]) and _is_bare_variable(args[1])):
+                continue
+            a0 = next(iter(_VAR_NAME_RE.finditer(args[0])), None)
+            a1 = next(iter(_VAR_NAME_RE.finditer(args[1])), None)
+            if not (a0 and a1):
+                continue
+            n0, n1 = _norm(a0.group(1)), _norm(a1.group(1))
+            # one side is a copy of the other (in either operand position)
+            if copies.get(n0) == n1 or copies.get(n1) == n0:
+                yield getattr(c, "lineno", 0) or 0
+
+
 def _looks_constant_true(arg):
     return _norm(arg) in ("${true}", "true", "1", "${1}")
 
@@ -634,6 +704,50 @@ def _duplicate_template_rows(testcase):
             seen.add(key)
 
 
+def _suite_fixture_keywords(model):
+    """The suite-level Test Setup / Test Teardown keyword calls from *** Settings ***,
+    as {'setup': (keyword, args) or None, 'teardown': (keyword, args) or None}. These
+    apply to every test in the file that does not override them with its own [Setup]/
+    [Teardown]. Suite Setup/Suite Teardown run once per suite, not per test, so they are
+    out of scope for a per-test oracle-phase check."""
+    out = {"setup": None, "teardown": None}
+    for section in getattr(model, "sections", None) or []:
+        for item in getattr(section, "body", None) or []:
+            cls = type(item).__name__
+            kw = getattr(item, "name", None)
+            args = list(getattr(item, "args", None) or [])
+            if cls == "TestSetup" and kw:
+                out["setup"] = (kw, args)
+            elif cls == "TestTeardown" and kw:
+                out["teardown"] = (kw, args)
+    return out
+
+
+# Sentinel: the test explicitly set [Setup]/[Teardown] NONE, which CLEARS the inherited
+# suite fixture (distinct from "the test has no [Setup]", which inherits it).
+_NONE_FIXTURE = object()
+
+
+def _test_fixture_keywords(testcase):
+    """The test's own [Setup]/[Teardown] as {'setup', 'teardown'}, distinguishing three
+    states per slot: None (the test has no such setting, so it inherits the suite fixture),
+    _NONE_FIXTURE (an explicit `[Setup] NONE` that clears the inherited fixture), or a
+    (keyword, args) tuple (an own fixture)."""
+    out = {"setup": None, "teardown": None}
+    for item in getattr(testcase, "body", None) or []:
+        cls = type(item).__name__
+        kw = getattr(item, "name", None)
+        args = list(getattr(item, "args", None) or [])
+        slot = "setup" if cls == "Setup" else "teardown" if cls == "Teardown" else None
+        if slot is None:
+            continue
+        if not kw or _norm(kw) == "none":
+            out[slot] = _NONE_FIXTURE      # explicit NONE (or empty): clears the inherited fixture
+        else:
+            out[slot] = (kw, args)
+    return out
+
+
 def _tags(testcase):
     tags = []
     for item in getattr(testcase, "body", None) or []:
@@ -707,6 +821,17 @@ def _call_level_smells(file, owner, calls, findings, local_keywords=None, extra_
             findings.append(Finding(file, ln, owner, "C9", "expects any error (catch-all pattern)"))
             has_verification = True
             continue
+        # C9b (#75): a RequestsLibrary HTTP method with expected_status=any/anything is an
+        # assertion-shaped call with its oracle switched off - the request accepts every
+        # status. Distinct from C2b ('no oracle'): here the oracle exists but is disabled.
+        # Reuses the exact-match _EXPECTED_STATUS_OFF set is_verification already keys on.
+        if _norm(_strip_library_prefix(kw, local_keywords)).replace(" on session", "") in HTTP_METHODS:
+            off = _expected_status_off_value(args)
+            if off is not None:
+                findings.append(Finding(file, ln, owner, "C9b",
+                                        "expected_status=%s accepts any HTTP status" % off))
+                has_verification = True
+                continue
         if _norm(kw) == "should be equal" and len(args) >= 2:
             if args[0] == args[1]:
                 code = "C7" if args[0].startswith("${") else "C5"
@@ -734,6 +859,15 @@ def _call_level_smells(file, owner, calls, findings, local_keywords=None, extra_
         if c44_ln not in owned:
             findings.append(Finding(file, c44_ln, owner, "C44",
                                     "assertion is satisfied for any value"))
+        has_verification = True
+    # C11a (#76): a Should Be Equal whose expected side is an in-body copy of the actual
+    # (made by a Set Variable). The assertion confirms itself - a verification, but a
+    # circular one. Suppress where C7 already owns the line (the plain ${x} ${x} form).
+    c7_owned = {f.line for f in findings if f.code == "C7"}
+    for c11_ln in _self_confirming_literal(calls):
+        if c11_ln not in c7_owned:
+            findings.append(Finding(file, c11_ln, owner, "C11a",
+                                    "expected value is a copy of the actual"))
         has_verification = True
     return has_verification
 
@@ -783,7 +917,7 @@ def _keyword_body_verifies(kw, local_keywords=None, extra_verify=None):
     return _call_level_smells("", "", calls, [], local_keywords, extra_verify)
 
 
-def analyze_testcase(file, tc, findings, keyword_index=None, extra_verify=None, long_test=None):
+def analyze_testcase(file, tc, findings, keyword_index=None, extra_verify=None, long_test=None, suite_fixtures=None):
     name = getattr(tc, "name", "") or ""
     line = getattr(tc, "lineno", 0) or 0
     calls = list(_keyword_calls(tc))
@@ -886,6 +1020,32 @@ def analyze_testcase(file, tc, findings, keyword_index=None, extra_verify=None, 
         findings.append(Finding(file, line, name, "C3"))
         return
 
+    # R8 (#74): the body runs keywords but does not verify - yet a fixture does. The
+    # test's own [Setup]/[Teardown] takes priority over the suite-level Test Setup/
+    # Teardown it would otherwise inherit. A verifying [Setup] checks preconditions
+    # BEFORE the body acts (the body can break and the suite stays green) - high. A
+    # verifying [Teardown]-only runs even on body failure, reporting on a separate
+    # axis - low. Reuses is_verification, so custom/--verify-keywords still suppress.
+    # Only fires on zero body verification (this branch); a body oracle pre-empts it.
+    if not has_verification:
+        fx = dict(suite_fixtures or {"setup": None, "teardown": None})
+        own = _test_fixture_keywords(tc)
+        if own["setup"] is not None:
+            fx["setup"] = None if own["setup"] is _NONE_FIXTURE else own["setup"]
+        if own["teardown"] is not None:
+            fx["teardown"] = None if own["teardown"] is _NONE_FIXTURE else own["teardown"]
+        setup_verifies = bool(fx["setup"]) and is_verification(
+            fx["setup"][0], fx["setup"][1], local_keywords, extra_verify)
+        teardown_verifies = bool(fx["teardown"]) and is_verification(
+            fx["teardown"][0], fx["teardown"][1], local_keywords, extra_verify)
+        if setup_verifies:
+            findings.append(Finding(file, line, name, "R8",
+                                    "verification only in [Setup]/Test Setup, not the body"))
+            return
+        if teardown_verifies:
+            findings.append(Finding(file, line, name, "R8b",
+                                    "verification only in [Teardown]/Test Teardown, not the body"))
+            return
     # C2b: keywords ran but nothing verified
     if not has_verification:
         findings.append(Finding(file, line, name, "C2b"))
@@ -1012,14 +1172,18 @@ def analyze_file(path, extra_verify=None, long_test=None):
     # over an imported library, so these names are not prefix-stripped.
     local_keywords = set(keyword_index) if keyword_index else None
 
+    # Suite-level Test Setup/Teardown apply to every test that does not override them
+    # with its own [Setup]/[Teardown] (R8). Collected once per file.
+    suite_fixtures = _suite_fixture_keywords(model)
+
     class _V(ModelVisitor):
         def visit_TestCase(self, node):
             if not is_resource:
-                analyze_testcase(path, node, self_findings, keyword_index, extra_verify, long_test)
+                analyze_testcase(path, node, self_findings, keyword_index, extra_verify, long_test, suite_fixtures)
 
         def visit_Task(self, node):  # RPA suites use *** Tasks ***, not *** Test Cases ***
             if not is_resource:
-                analyze_testcase(path, node, self_findings, keyword_index, extra_verify, long_test)
+                analyze_testcase(path, node, self_findings, keyword_index, extra_verify, long_test, suite_fixtures)
 
         def visit_Keyword(self, node):  # user keyword defs in .robot Keywords + .resource
             analyze_keyword(path, node, self_findings, local_keywords, extra_verify)
