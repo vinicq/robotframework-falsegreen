@@ -67,7 +67,8 @@ Get Users Returns 200
 
 
 def test_c2b_flagged_on_expected_status_any(tmp_path):
-    # expected_status=any disables the check: no oracle, still C2b.
+    # expected_status=any disables the check. Since #75 this is reported as C9b
+    # (oracle disabled), not conflated into the generic C2b (no oracle).
     body = """\
 *** Settings ***
 Library    RequestsLibrary
@@ -76,7 +77,9 @@ Library    RequestsLibrary
 Status Disabled
     GET    https://api.example.com/users    expected_status=any
 """
-    assert "C2b" in codes(tmp_path, body)
+    found = codes(tmp_path, body)
+    assert "C9b" in found
+    assert "C2b" not in found
 
 
 def test_c2b_flagged_on_request_without_expected_status(tmp_path):
@@ -1958,3 +1961,213 @@ No Custom Verifier
     f = tmp_path / "t.robot"
     f.write_text(body, encoding="utf-8")
     assert {x.code for x in scan([str(f)])} == {x.code for x in scan([str(f)], extra_verify=set())}
+
+
+# --- #74: R8 / R8b - verification lives only in [Setup]/[Teardown] ------------
+
+def test_r8_verification_only_in_test_setup(tmp_path):
+    # A verifying [Setup] checks preconditions BEFORE the body acts: the body can
+    # break and the suite stays green. Setup form is high.
+    body = """\
+*** Test Cases ***
+Setup Verifies
+    [Setup]    Should Be Equal    ${a}    ${b}
+    Log    body runs but verifies nothing
+"""
+    assert "R8" in codes(tmp_path, body)
+
+
+def test_r8_verification_only_in_suite_test_setup(tmp_path):
+    # Suite-level Test Setup is inherited by a test with no body oracle -> R8.
+    body = """\
+*** Settings ***
+Test Setup    Should Be Equal    ${a}    ${b}
+
+*** Test Cases ***
+Inherits Verifying Setup
+    Log    body runs but verifies nothing
+"""
+    assert "R8" in codes(tmp_path, body)
+
+
+def test_r8b_verification_only_in_teardown(tmp_path):
+    # A verifying [Teardown]-only runs even on body failure, on a separate axis. Low.
+    body = """\
+*** Test Cases ***
+Teardown Verifies
+    Do Something
+    [Teardown]    Verify Cleanup
+"""
+    found = codes(tmp_path, body)
+    assert "R8b" in found
+    assert "R8" not in found
+
+
+def test_no_r8_when_body_verifies(tmp_path):
+    # One token away: the body has its own oracle, so the [Setup] check is fine.
+    body = """\
+*** Test Cases ***
+Body Verifies
+    [Setup]    Should Be Equal    ${a}    ${b}
+    Should Be Equal    ${x}    ${y}
+"""
+    assert "R8" not in codes(tmp_path, body)
+
+
+def test_no_r8_when_setup_does_not_verify(tmp_path):
+    # A non-verifying [Setup] with a body oracle is a normal test.
+    body = """\
+*** Test Cases ***
+Normal
+    [Setup]    Open Browser    http://x
+    Should Be Equal    ${x}    ${y}
+"""
+    assert codes(tmp_path, body) == set()
+
+
+def test_test_setup_overrides_suite_setup_for_r8(tmp_path):
+    # The test's own non-verifying [Setup] overrides the verifying suite Test Setup,
+    # so no R8 - but the body still has no oracle, so C2b fires instead.
+    body = """\
+*** Settings ***
+Test Setup    Should Be Equal    ${a}    ${b}
+
+*** Test Cases ***
+Overrides Setup
+    [Setup]    Open Browser    http://x
+    Log    nothing verified
+"""
+    found = codes(tmp_path, body)
+    assert "R8" not in found
+    assert "C2b" in found
+
+
+# --- #75: C9b - RequestsLibrary expected_status=any is a disabled oracle -------
+
+def test_c9b_expected_status_any(tmp_path):
+    body = """\
+*** Settings ***
+Library    RequestsLibrary
+
+*** Test Cases ***
+Status Disabled
+    GET    https://api.example.com/users    expected_status=any
+"""
+    found = codes(tmp_path, body)
+    assert "C9b" in found
+    assert "C2b" not in found  # no longer conflated with 'no oracle'
+
+
+def test_c9b_expected_status_anything_on_session(tmp_path):
+    body = """\
+*** Settings ***
+Library    RequestsLibrary
+
+*** Test Cases ***
+Status Disabled
+    GET On Session    api    /users    expected_status=anything
+"""
+    assert "C9b" in codes(tmp_path, body)
+
+
+def test_no_c9b_for_specific_status(tmp_path):
+    # One token away: a specific code keeps the oracle alive - no C9b, no C2b.
+    body = """\
+*** Settings ***
+Library    RequestsLibrary
+
+*** Test Cases ***
+Specific
+    GET    https://api.example.com/users    expected_status=200
+"""
+    found = codes(tmp_path, body)
+    assert "C9b" not in found
+    assert "C2b" not in found
+
+
+# --- #76: C11a - self-confirming literal (expected is a copy of the actual) ----
+
+def test_c11a_self_confirming_literal(tmp_path):
+    body = """\
+*** Test Cases ***
+Self Confirming
+    ${value}=    Get Value From Sut
+    ${expected}=    Set Variable    ${value}
+    Should Be Equal    ${value}    ${expected}
+"""
+    found = codes(tmp_path, body)
+    assert "C11a" in found
+
+
+def test_no_c11a_when_expected_is_independent(tmp_path):
+    # One token away: the expected value is a literal, not a copy of the actual.
+    body = """\
+*** Test Cases ***
+Honest
+    ${value}=    Get Value From Sut
+    ${expected}=    Set Variable    42
+    Should Be Equal    ${value}    ${expected}
+"""
+    assert "C11a" not in codes(tmp_path, body)
+
+
+def test_c11a_does_not_displace_plain_self_compare_c7(tmp_path):
+    # The plain ${x} ${x} form stays C7, not C11a (C7 owns the line).
+    body = """\
+*** Test Cases ***
+Plain Self
+    Should Be Equal    ${x}    ${x}
+"""
+    found = codes(tmp_path, body)
+    assert "C7" in found
+    assert "C11a" not in found
+
+
+# --- P2 regression: fixture NONE clears inherited fixture; C11a reassignment ---
+
+def test_setup_none_clears_inherited_verifying_test_setup(tmp_path):
+    # [Setup] NONE explicitly opts out of a verifying suite Test Setup, so R8 must NOT
+    # fire; the body still verifies nothing, so it is a plain C2b.
+    body = """\
+*** Settings ***
+Test Setup    Should Be Equal    ${a}    ${b}
+
+*** Test Cases ***
+Opts Out Of Setup
+    [Setup]    NONE
+    Log    nothing
+"""
+    found = codes(tmp_path, body)
+    assert "R8" not in found
+    assert "C2b" in found
+
+
+def test_teardown_none_clears_inherited_verifying_test_teardown(tmp_path):
+    # [Teardown] NONE opts out of a verifying suite Test Teardown -> not R8b, but C2b.
+    body = """\
+*** Settings ***
+Test Teardown    Verify Cleanup
+
+*** Test Cases ***
+Opts Out Of Teardown
+    Log    nothing
+    [Teardown]    NONE
+"""
+    found = codes(tmp_path, body)
+    assert "R8b" not in found
+    assert "C2b" in found
+
+
+def test_no_c11a_on_snapshot_then_recompute(tmp_path):
+    # An honest snapshot-recompute-compare: ${expected} snapshots ${value}, then ${value}
+    # is recomputed before the assertion. The expected side is no longer a copy of the
+    # actual, so C11a must NOT fire.
+    body = """\
+*** Test Cases ***
+Snapshot Then Recompute
+    ${value}=    Get Value
+    ${expected}=    Set Variable    ${value}
+    ${value}=    Recompute
+    Should Be Equal    ${value}    ${expected}
+"""
+    assert "C11a" not in codes(tmp_path, body)

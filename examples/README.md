@@ -16,8 +16,8 @@ file and asserts every code below fires in its file.
 
 | File | Theme | Codes |
 |---|---|---|
-| `effectiveness.robot` | no oracle / trivial oracle / wrong oracle | C5, C6, C7, C9, C44, R6, R2 |
-| `execution.robot` | the verification never runs, or the test is forced green | C2, C2b, C3, C20, C21, C32, CC, R1, R4, R5, R7 |
+| `effectiveness.robot` | no oracle / trivial oracle / wrong oracle | C5, C6, C7, C9, C9b, C11a, C44, R6, R2 |
+| `execution.robot` | the verification never runs, runs in the wrong phase, or the test is forced green | C2, C2b, C3, C20, C21, C32, CC, R1, R4, R5, R7, R8, R8b |
 | `nondeterminism.robot` | passes or fails by luck (Sleep, clock, randomness) | C16 |
 | `dependency.robot` | environment coupling / mystery guest | C23 |
 | `templates.robot` | duplicate template data row | C37 |
