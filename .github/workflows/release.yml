@@ -23,7 +23,7 @@ jobs:
     # unrecoverable (#95).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Version parity (tag == pyproject == __version__ == CITATION == CHANGELOG)
         run: |
           tag="${GITHUB_REF_NAME#v}"
@@ -43,7 +43,7 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
