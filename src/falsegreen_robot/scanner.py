@@ -20,7 +20,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-__version__ = "0.6.1"  # keep in lockstep with pyproject.toml (test_version_lockstep enforces it)
+__version__ = "0.6.2"  # keep in lockstep with pyproject.toml (test_version_lockstep enforces it)
 TOOL_URI = "https://github.com/vinicq/robotframework-falsegreen"
 
 # --- case catalog. code -> (title, confidence, judgment J1-J6) -------------
@@ -888,16 +888,23 @@ def _name_implies_verification(name):
     return "should" in n or n.startswith(("verify", "assert", "validate"))
 
 
-def _call_level_smells(file, owner, calls, findings, local_keywords=None, extra_verify=None):
+def _call_level_smells(file, owner, calls, findings, local_keywords=None, extra_verify=None, dead_lines=None):
     """Per-call false-green checks shared by test cases, tasks, and user keywords:
     C5 (always-true), C7 (self-compare), C16 (Sleep). Returns whether any keyword
-    call verifies something."""
+    call verifies something.
+
+    Lines in dead_lines sit after a terminator and are owned by C20 (#81): the
+    assertion there never runs, so its value-shape family (C5/C6/C7/R6/C44/C11a)
+    is moot and suppressed - C20 alone reports the line. C16 (non-determinism) is
+    a separate family and still co-fires."""
+    dead = dead_lines or set()
     has_verification = False
     # C5 (#47): a constant-true Set Variable If whose assigned value feeds the
     # expected side of a later Should Be Equal pins the oracle to a fixed constant.
     for svi_ln in _set_variable_if_pins_oracle(calls):
-        findings.append(Finding(file, svi_ln, owner, "C5",
-                                "Set Variable If with a constant-true guard pins the expected value"))
+        if svi_ln not in dead:
+            findings.append(Finding(file, svi_ln, owner, "C5",
+                                    "Set Variable If with a constant-true guard pins the expected value"))
     for c_idx, c in enumerate(calls):
         kw, args = c.keyword, list(getattr(c, "args", []) or [])
         ln = getattr(c, "lineno", 0) or 0
@@ -909,16 +916,19 @@ def _call_level_smells(file, owner, calls, findings, local_keywords=None, extra_
                 findings.append(Finding(file, ln, owner, "C23", "hard-coded IP-address URL"))
                 break
         if _norm(kw) == "should be true" and args and _looks_constant_true(args[0]):
-            findings.append(Finding(file, ln, owner, "C5", "Should Be True on a constant"))
+            if ln not in dead:
+                findings.append(Finding(file, ln, owner, "C5", "Should Be True on a constant"))
             has_verification = True
             continue
         if _norm(kw) == "should be true" and len(args) == 1 and _is_bare_variable(args[0]):
-            findings.append(Finding(file, ln, owner, "C6", "Should Be True on a bare variable (truthiness only)"))
+            if ln not in dead:
+                findings.append(Finding(file, ln, owner, "C6", "Should Be True on a bare variable (truthiness only)"))
             has_verification = True
             continue
         if _norm(kw) == "should be true" and args and _is_string_literal_truthy(args[0]):
-            findings.append(Finding(file, ln, owner, "R6",
-                                    "Should Be True on a string literal (always truthy)"))
+            if ln not in dead:
+                findings.append(Finding(file, ln, owner, "R6",
+                                        "Should Be True on a string literal (always truthy)"))
             has_verification = True
             continue
         if _norm(kw) == "run keyword and expect error" and args \
@@ -942,7 +952,7 @@ def _call_level_smells(file, owner, calls, findings, local_keywords=None, extra_
                 has_verification = True
                 continue
         if _norm(kw) == "should be equal" and len(args) >= 2:
-            if args[0] == args[1]:
+            if args[0] == args[1] and ln not in dead:
                 code = "C7" if args[0].startswith("${") else "C5"
                 findings.append(Finding(file, ln, owner, code, "both sides are identical"))
             has_verification = True
@@ -965,7 +975,7 @@ def _call_level_smells(file, owner, calls, findings, local_keywords=None, extra_
     # take precedence on the same assertion. A C44 form is itself a verification.
     owned = {f.line for f in findings if f.code in ("C5", "C6", "R6")}
     for c44_ln in _vacuous_library_assertion(calls):
-        if c44_ln not in owned:
+        if c44_ln not in owned and c44_ln not in dead:
             findings.append(Finding(file, c44_ln, owner, "C44",
                                     "assertion is satisfied for any value"))
         has_verification = True
@@ -974,7 +984,7 @@ def _call_level_smells(file, owner, calls, findings, local_keywords=None, extra_
     # circular one. Suppress where C7 already owns the line (the plain ${x} ${x} form).
     c7_owned = {f.line for f in findings if f.code == "C7"}
     for c11_ln in _self_confirming_literal(calls):
-        if c11_ln not in c7_owned:
+        if c11_ln not in c7_owned and c11_ln not in dead:
             findings.append(Finding(file, c11_ln, owner, "C11a",
                                     "expected value is a copy of the actual"))
         has_verification = True
@@ -1000,11 +1010,14 @@ def analyze_keyword(file, kw, findings, local_keywords=None, extra_verify=None):
         findings.append(Finding(file, line, name, "R4"))
         return
 
-    has_verification = _call_level_smells(file, name, calls, findings, local_keywords, extra_verify)
+    # Dead lines (verification after a terminator) are computed first so the
+    # call-level scan can suppress the value-shape family there - C20 owns them (#81).
+    dead_lines = set(_dead_verification_after_terminator(kw, local_keywords, extra_verify))
+    has_verification = _call_level_smells(file, name, calls, findings, local_keywords, extra_verify, dead_lines)
 
     # C20: a verification after a [Return]/Return/Fail/Return From Keyword in the
     # same block is dead - it never runs.
-    for dead_ln in _dead_verification_after_terminator(kw, local_keywords, extra_verify):
+    for dead_ln in sorted(dead_lines):
         findings.append(Finding(file, dead_ln, name, "C20",
                                 "verification after a terminator never runs"))
 
@@ -1093,7 +1106,10 @@ def analyze_testcase(file, tc, findings, keyword_index=None, extra_verify=None, 
         findings.append(Finding(file, line, name, "R4"))
         return
 
-    has_verification = _call_level_smells(file, name, calls, findings, local_keywords, extra_verify)
+    # Dead lines (verification after a terminator) are computed first so the
+    # call-level scan can suppress the value-shape family there - C20 owns them (#81).
+    dead_lines = set(_dead_verification_after_terminator(tc, local_keywords, extra_verify))
+    has_verification = _call_level_smells(file, name, calls, findings, local_keywords, extra_verify, dead_lines)
 
     # diagnostic/coupling group (off by default; emitted always, filtered in scan)
     if _has_control_block(tc):
@@ -1104,7 +1120,7 @@ def analyze_testcase(file, tc, findings, keyword_index=None, extra_verify=None, 
 
     # C20: a verification keyword after a terminator ([Return]/Fail/Pass Execution/
     # Return From Keyword) in the same block is a dead step - it never runs.
-    for dead_ln in _dead_verification_after_terminator(tc, local_keywords, extra_verify):
+    for dead_ln in sorted(dead_lines):
         findings.append(Finding(file, dead_ln, name, "C20",
                                 "verification after a terminator never runs"))
 

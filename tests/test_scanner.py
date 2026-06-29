@@ -1404,6 +1404,47 @@ Always Fails First
     assert "C20" in codes(tmp_path, body)
 
 
+def test_c5_fires_on_live_should_be_true_constant(tmp_path):
+    # BAD baseline: a reachable always-true check is C5 (and not dead, so no C20).
+    body = """\
+*** Test Cases ***
+Live Constant Check
+    Should Be True    ${TRUE}
+"""
+    found = codes(tmp_path, body)
+    assert "C5" in found
+    assert "C20" not in found
+
+
+def test_c5_suppressed_on_dead_line_c20_only(tmp_path):
+    # #81: the SAME always-true check AFTER a terminator is dead. The assertion
+    # never runs, so its value-shape code (C5) is moot - C20 owns the line and C5
+    # is suppressed, matching the Python reference (no C5+C20 double-report).
+    body = """\
+*** Keywords ***
+Bails Then Checks Constant
+    Return From Keyword
+    Should Be True    ${TRUE}
+"""
+    on_dead_line = {f.code for f in _findings(tmp_path, body, name="kw.resource")
+                    if f.line == 4}
+    assert on_dead_line == {"C20"}
+
+
+def test_c7_self_compare_suppressed_on_dead_line(tmp_path):
+    # #81: C7 (self-compare) is part of the same value-shape family; a self-compare
+    # after a terminator is dead and reported as C20 alone.
+    body = """\
+*** Keywords ***
+Bails Then Self Compares
+    Return From Keyword
+    Should Be Equal    ${x}    ${x}
+"""
+    on_dead_line = {f.code for f in _findings(tmp_path, body, name="kw.resource")
+                    if f.line == 4}
+    assert on_dead_line == {"C20"}
+
+
 # C37: duplicate [Template] data row.
 
 def test_c37_duplicate_template_row(tmp_path):

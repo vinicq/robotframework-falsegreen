@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-06-29
+
+### Fixed
+
+- C5 and the value-shape family no longer double-report on dead lines (#81): a
+  verification after a terminator (`Return From Keyword`/`[Return]`/`Fail`/
+  `Pass Execution`) is owned by C20, so the per-line value-shape codes there
+  (`C5`, `C6`, `C7`, `R6`, `C44`, `C11a`) are suppressed and C20 alone reports
+  the line, matching the Python reference. The dead-line set is now computed
+  before the call-level scan and threaded into it, the same `owned` discipline
+  C44/C11a already used. `C16` (non-determinism) stays a separate family and
+  still co-fires, as the independent-family contract requires.
+
 ## [0.6.1] - 2026-06-29
 
 ### Fixed
