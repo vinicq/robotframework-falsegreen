@@ -516,6 +516,18 @@ A real API or database hit inside a test that claims to be a unit test is itself
 (environment coupling, mystery guest), not the level of the test. C23 flags the strongest
 form: a hard-coded IP-address endpoint.
 
+### Patterns by test level and scope
+
+The same false-green shape is classified by the level the test runs at: the level is a
+per-finding axis (J3), read as unit, integration, or E2E. The codes that cluster at each
+level in Robot:
+
+- **Unit:** `C5`/`C7` (always-true, self-compare).
+- **Integration:** `C9b` (RequestsLibrary `expected_status=any`, the request oracle off).
+- **E2E:** `R1` (`Pass Execution` forces green), `R2` (hollow verifier keyword), `R4` (`No Operation` only), `R6` (`Should Be True` on a string literal), `C16` (`Sleep` as synchronization).
+
+Full matrix on the docs site: [patterns by test level](https://vinicq.github.io/falsegreen-docs/concepts/by-test-level/) and [what we do not flag](https://vinicq.github.io/falsegreen-docs/concepts/what-we-do-not-flag/).
+
 ## Scope and honesty
 
 Static scan: it owns what the keyword structure proves. It does not run the suite, so it
