@@ -20,7 +20,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-__version__ = "0.5.1"  # keep in lockstep with pyproject.toml (test_version_lockstep enforces it)
+__version__ = "0.6.0"  # keep in lockstep with pyproject.toml (test_version_lockstep enforces it)
 TOOL_URI = "https://github.com/vinicq/robotframework-falsegreen"
 
 # --- case catalog. code -> (title, confidence, judgment J1-J6) -------------
@@ -45,6 +45,7 @@ CASES = {
     "C23": ("hard-coded IP-address URL in test data (environment coupling / mystery guest)", "low", "J6"),
     "C21": ("verification only runs conditionally (inside IF / Run Keyword If) — it may never execute", "low", "J1"),
     "C32": ("skipped test (robot:skip / Skip) never runs", "low", "J1"),
+    "C31": ("captured value never used (${x}= Get Text loc) - the test verifies something else, so the capture is dead", "low", "J4"),
     "R1":  ("Pass Execution forces the test to pass regardless of any check (forced green)", "high", "J1"),
     "R2":  ("user keyword named like a verifier (Verify/Assert/Should...) but its body contains no verification — a hollow oracle", "low", "J1"),
     "R3":  ("*** Test Cases *** section inside a .resource file — invalid; the cases never run", "high", "J1"),
@@ -99,6 +100,7 @@ FIX_HINTS = {
     "C21": "move the verification out of the IF/Run Keyword If so it always runs",
     "C23": "read the URL from a variable/resource, not a hard-coded IP",
     "C32": "remove the skip, or document why with a reason",
+    "C31": "assert the captured value, or drop the assignment if it is unused",
     "R1":  "remove Pass Execution; let the checks decide the result",
     "R2":  "make the verifier keyword actually assert, or rename it",
     "R3":  "move the test cases to a .robot suite; .resource holds keywords only",
@@ -533,6 +535,54 @@ def _status_asserted_later(calls, idx, resp_names):
                 if ("${%s.status_code}" % name) in low or ("${%s}[status_code]" % name) in low:
                     return True
     return False
+
+
+def _captured_value_unused(calls, source_lines, scope_end):
+    """C31 (#34): a keyword call that captures a value (`${x}=    Get Text    loc`)
+    whose captured name is never referenced afterwards, while the test verifies
+    something else. The capture is dead - the call ran for its return value, but the
+    value is dropped. Yields the lineno of each such capture.
+
+    Precision-first, deferred and shipped at LOW on purpose. Guards (per #34):
+
+    - Skip `Set Variable*` assignments (Set Variable / Set Test|Suite|Global Variable
+      and Set Variable If). Those name a variable to be read by a LATER step that the
+      author may write outside this scan, and the no-oracle / pinned-oracle cases are
+      already C2b / C5 / C11a.
+    - Skip swallow captures (Run Keyword And Ignore Error / Return Status): the unused
+      STATUS form is C3, owned there.
+    - A capture counts as USED when its bare name appears as a token anywhere later
+      WITHIN THE SAME TEST (up to scope_end, the test's end_lineno - so a later
+      keyword call, an `IF`/`WHILE` condition, a `Log ${x}`, an `Evaluate` that
+      splices it, or the `[Teardown]` all count). Bounded to the test on purpose: a
+      same-named variable in a LATER test must not keep this capture alive (L5). The
+      scan is otherwise broad - any in-test textual mention suppresses, so the only
+      thing flagged is a capture with no downstream mention in its own test.
+    - Only fires when the test still verifies something else (the caller gates this on
+      has_verification). A capture in a test with no oracle is C2b, not C31.
+    """
+    for c in calls:
+        if type(c).__name__ != "KeywordCall":
+            continue
+        kw = _norm(getattr(c, "keyword", ""))
+        if kw.startswith("set variable") or kw.startswith("set test variable") \
+                or kw.startswith("set suite variable") or kw.startswith("set global variable"):
+            continue
+        if is_swallow(c.keyword):
+            continue
+        assigned = _assigned_names(c)
+        if not assigned:
+            continue
+        ln = getattr(c, "lineno", 0) or 0
+        # Every variable token mentioned on a later physical source line, up to the
+        # owning test's end (covers Log / Evaluate strings / teardown / continuations,
+        # but not a later test that happens to reuse the name).
+        used_tokens = set()
+        for later in source_lines[ln:scope_end]:
+            for m in _VAR_NAME_RE.finditer(later):
+                used_tokens.add(_norm(m.group(1)))
+        if not (assigned & used_tokens):
+            yield ln
 
 
 def _self_confirming_literal(calls):
@@ -976,7 +1026,7 @@ def _keyword_body_verifies(kw, local_keywords=None, extra_verify=None):
     return _call_level_smells("", "", calls, [], local_keywords, extra_verify)
 
 
-def analyze_testcase(file, tc, findings, keyword_index=None, extra_verify=None, long_test=None, suite_fixtures=None):
+def analyze_testcase(file, tc, findings, keyword_index=None, extra_verify=None, long_test=None, suite_fixtures=None, source_lines=None):
     name = getattr(tc, "name", "") or ""
     line = getattr(tc, "lineno", 0) or 0
     calls = list(_keyword_calls(tc))
@@ -1057,6 +1107,17 @@ def analyze_testcase(file, tc, findings, keyword_index=None, extra_verify=None, 
     for dead_ln in _dead_verification_after_terminator(tc, local_keywords, extra_verify):
         findings.append(Finding(file, dead_ln, name, "C20",
                                 "verification after a terminator never runs"))
+
+    # C31 (#34): a captured value (${x}= Get Text loc) that no later step reads,
+    # while the test still verifies something else. Deferred and shipped LOW,
+    # precision-first: any later textual mention of the name (Log, an Evaluate
+    # string, a teardown) counts as used, so only a wholly dead capture is flagged.
+    # Gated on has_verification - a capture in a no-oracle test is C2b, not C31.
+    if has_verification and source_lines is not None:
+        scope_end = getattr(tc, "end_lineno", None) or len(source_lines)
+        for cap_ln in _captured_value_unused(calls, source_lines, scope_end):
+            findings.append(Finding(file, cap_ln, name, "C31",
+                                    "captured value is never used"))
 
     # C3: native TRY/EXCEPT whose EXCEPT swallows the failure
     for tb in _try_blocks(tc):
@@ -1240,14 +1301,23 @@ def analyze_file(path, extra_verify=None, long_test=None):
     # with its own [Setup]/[Teardown] (R8). Collected once per file.
     suite_fixtures = _suite_fixture_keywords(model)
 
+    # Raw source, read once: the parser drops comments (CC needs them) and the line
+    # text is the broad "captured value used anywhere later" signal (C31, #34).
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            source = fh.read()
+    except Exception:
+        source = ""
+    source_lines = source.splitlines()
+
     class _V(ModelVisitor):
         def visit_TestCase(self, node):
             if not is_resource:
-                analyze_testcase(path, node, self_findings, keyword_index, extra_verify, long_test, suite_fixtures)
+                analyze_testcase(path, node, self_findings, keyword_index, extra_verify, long_test, suite_fixtures, source_lines)
 
         def visit_Task(self, node):  # RPA suites use *** Tasks ***, not *** Test Cases ***
             if not is_resource:
-                analyze_testcase(path, node, self_findings, keyword_index, extra_verify, long_test, suite_fixtures)
+                analyze_testcase(path, node, self_findings, keyword_index, extra_verify, long_test, suite_fixtures, source_lines)
 
         def visit_Keyword(self, node):  # user keyword defs in .robot Keywords + .resource
             analyze_keyword(path, node, self_findings, local_keywords, extra_verify)
@@ -1255,13 +1325,8 @@ def analyze_file(path, extra_verify=None, long_test=None):
     _V().visit(model)
 
     # CC: commented-out verification keyword. Raw source scan (the parser drops
-    # comments). The test/keyword name is unknown at the line level, so the finding
-    # carries the empty owner, like R3.
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            source = fh.read()
-    except Exception:
-        source = ""
+    # comments) - reuses the source read above. The test/keyword name is unknown at
+    # the line level, so the finding carries the empty owner, like R3.
     for cc_ln in _commented_out_verifications(source):
         self_findings.append(Finding(path, cc_ln, "", "CC", "commented-out verification keyword"))
 
@@ -1362,7 +1427,7 @@ def _render_text(findings):
     return "\n".join(lines)
 
 
-_OUTPUT_EXT = {"text": "txt", "json": "json", "sarif": "sarif", "junit": "xml"}
+_OUTPUT_EXT = {"text": "txt", "json": "json", "sarif": "sarif", "junit": "xml", "robot": "txt"}
 
 
 def _rel_uri(path):
@@ -1675,8 +1740,56 @@ def audit_config(start=None):
     return findings
 
 
+def render_robot(findings):
+    """Per-test report (#8): findings grouped by suite file, then by the test case
+    that owns them, the way a Robot Framework user reads log.html - "which of my
+    test cases is a false green, and why". Each test heading is followed by its
+    findings (code, confidence, line, title, fix); findings with no owning test
+    (CC / R3, which sit at the file level, and the project-layer PL codes) are
+    grouped under a `[suite-level]` heading so nothing is dropped.
+
+    ponytail: this is the light track of #8. The heavy track - a Listener v3 /
+    prerebotmodifier that injects findings into a real output.xml so they surface
+    inside Robot's own log.html - is deliberately NOT built: the output.xml schema
+    drifts across RF 4/5/7, and a finding in a .resource keyword has no owning test
+    to attach to. This text grouping delivers "smells under each test" with none of
+    that fragility. Add the listener if a user asks for in-log.html rendering.
+    """
+    if not findings:
+        return "rffalsegreen: no false-positive patterns found."
+    lines, high, low = [], 0, 0
+    by_file = {}
+    for f in findings:
+        by_file.setdefault(f.file, []).append(f)
+    for file in sorted(by_file):
+        lines.append("\n" + file)
+        by_test = {}
+        for f in by_file[file]:
+            by_test.setdefault(f.test or "", []).append(f)
+        # Named tests first (alpha), then the file-level bucket last.
+        named = sorted(t for t in by_test if t)
+        order = named + ([""] if "" in by_test else [])
+        for test in order:
+            heading = test if test else "[suite-level]"
+            lines.append("  %s" % heading)
+            for f in sorted(by_test[test], key=lambda x: x.line):
+                conf = _eff_conf(f.code)
+                tag = "HIGH" if conf == "high" else "low "
+                high += conf == "high"
+                low += conf == "low"
+                title = CASES[f.code][0]
+                lines.append("    %s %-4s L%-4d %s" % (tag, f.code, f.line, title))
+                if f.detail:
+                    lines.append("           %s" % f.detail)
+                hint = FIX_HINTS.get(f.code, "")
+                if hint:
+                    lines.append("           fix: %s" % hint)
+    lines.append("\n%d high, %d low. %s" % (high, low, TOOL_URI))
+    return "\n".join(lines)
+
+
 RENDERERS = {"text": _render_text, "json": render_json,
-             "sarif": render_sarif, "junit": render_junit}
+             "sarif": render_sarif, "junit": render_junit, "robot": render_robot}
 
 
 def _emit(rendered, output, fmt):
@@ -1694,8 +1807,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="rffalsegreen",
                                 description="Find false-positive Robot Framework tests (static).")
     p.add_argument("paths", nargs="*", default=["."], help="files or directories (default: cwd)")
-    p.add_argument("--format", choices=["text", "json", "sarif", "junit"], default="text",
-                   help="output format (default: text)")
+    p.add_argument("--format", choices=["text", "json", "sarif", "junit", "robot"], default="text",
+                   help="output format (default: text); robot groups findings per test case")
     p.add_argument("--json", action="store_true", help="alias for --format json")
     p.add_argument("--output", default=None, metavar="PATH",
                    help="write the output to PATH instead of stdout; "

@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-29
+
+### Added
+
+- `C31` (low) (#34): a captured value the test never uses. `${x}=    Get Text    locator`
+  whose `${x}` no later step reads, while the test verifies something unrelated, is a dead
+  capture - the call ran for its return value and the value was dropped. Shipped behind low
+  confidence, precision-first: `Set Variable*` assignments are skipped (the no-oracle and
+  pinned-oracle forms are `C2b`/`C5`/`C11a`), an unused swallow status stays `C3`, and any
+  later textual mention of the name within the same test - a `Log`, an `Evaluate` string, a
+  `[Teardown]` - counts as a use, so only a wholly dead capture is flagged. Fires only when
+  the test has another oracle.
+- `--format robot` (#8): a per-test report that groups findings by suite file and then by
+  the test case that owns them, the way a Robot Framework user reads `log.html` - which of
+  my test cases is a false green, and why. Each test heading lists its codes, confidence,
+  line, title and fix hint; file-level findings (`CC`, `R3`) and project-layer codes sit
+  under a `[suite-level]` heading so nothing is dropped. The Listener v3 / `output.xml`
+  injection track of #8 was not built: the `output.xml` schema drifts across RF 4/5/7 and a
+  finding in a `.resource` keyword has no owning test, so the text grouping delivers smells
+  under each test without that fragility.
+
 ## [0.5.1] - 2026-06-29
 
 ### Fixed

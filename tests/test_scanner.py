@@ -5,7 +5,7 @@ import json
 from falsegreen_robot.scanner import (
     analyze_file, scan, group_of, main, resolve_output_path,
     _render_text, CASES, FIX_HINTS,
-    render_sarif, render_junit, render_json, _sarif_level,
+    render_sarif, render_junit, render_json, render_robot, _sarif_level,
     fingerprint, load_baseline, write_baseline,
     _strip_library_prefix, is_verification,
 )
@@ -2272,7 +2272,6 @@ Manual Status Check
 """
     assert "C9b" not in codes(tmp_path, body)
 
-
 def test_no_c9b_when_status_asserted_via_item_access(tmp_path):
     # The dict-item form of the same manual status check also suppresses C9b.
     body = """\
@@ -2285,3 +2284,141 @@ Manual Status Item
     Should Be Equal As Integers    ${r}[status_code]    200
 """
     assert "C9b" not in codes(tmp_path, body)
+
+
+# --- C31: captured value never used (#34) ----------------------------------
+def test_c31_captured_value_never_used(tmp_path):
+    # A value is captured and dropped while the test verifies an unrelated pair.
+    body = """\
+*** Test Cases ***
+Captured Dead
+    ${x}=    Get Text    //loc
+    Should Be Equal    ${a}    ${b}
+"""
+    cs = codes(tmp_path, body)
+    assert "C31" in cs
+    # The test does have an oracle, so it is not the no-verification case.
+    assert "C2b" not in cs
+
+
+def test_c31_is_low_confidence(tmp_path):
+    # Shipped behind low confidence on purpose, precision-first.
+    assert CASES["C31"][1] == "low"
+
+
+def test_no_c31_when_value_is_logged_later(tmp_path):
+    # A later Log of the captured name counts as a use, so the capture is alive.
+    body = """\
+*** Test Cases ***
+Logged
+    ${x}=    Get Text    //loc
+    Log    ${x}
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C31" not in codes(tmp_path, body)
+
+
+def test_no_c31_when_value_is_asserted(tmp_path):
+    # The captured value flows straight into the oracle, so it is used.
+    body = """\
+*** Test Cases ***
+Used In Assert
+    ${x}=    Get Text    //loc
+    Should Be Equal    ${x}    foo
+"""
+    assert "C31" not in codes(tmp_path, body)
+
+
+def test_no_c31_when_used_in_evaluate_string(tmp_path):
+    # A name spliced into a later Evaluate expression is a textual mention, so used.
+    body = """\
+*** Test Cases ***
+Eval Use
+    ${x}=    Get Text    //loc
+    ${y}=    Evaluate    int(${x}) + 1
+    Should Be Equal    ${y}    5
+"""
+    assert "C31" not in codes(tmp_path, body)
+
+
+def test_no_c31_when_used_in_teardown(tmp_path):
+    # A teardown that reads the captured name keeps it alive.
+    body = """\
+*** Test Cases ***
+Teardown Use
+    ${x}=    Get Text    //loc
+    Should Be Equal    ${a}    ${b}
+    [Teardown]    Log    ${x}
+"""
+    assert "C31" not in codes(tmp_path, body)
+
+
+def test_no_c31_for_set_variable_assignment(tmp_path):
+    # Set Variable is skipped: the no-oracle / pinned-oracle forms are other codes.
+    body = """\
+*** Test Cases ***
+Set Var Unused
+    ${x}=    Set Variable    foo
+    Should Be Equal    ${a}    ${b}
+"""
+    assert "C31" not in codes(tmp_path, body)
+
+
+def test_no_c31_for_swallow_status(tmp_path):
+    # An unused swallow status is C3, never re-reported as C31.
+    body = """\
+*** Test Cases ***
+Swallow
+    ${s}=    Run Keyword And Return Status    Do Thing
+    Should Be Equal    ${a}    ${b}
+"""
+    cs = codes(tmp_path, body)
+    assert "C31" not in cs
+    assert "C3" in cs
+
+
+# --- robot per-test output format (#8) --------------------------------------
+def test_render_robot_groups_findings_under_their_test(tmp_path):
+    body = """\
+*** Test Cases ***
+Captured Dead
+    ${x}=    Get Text    //loc
+    Should Be Equal    ${a}    ${b}
+
+Tautology
+    Should Be True    ${TRUE}
+"""
+    fs = _findings(tmp_path, body)
+    out = render_robot(fs)
+    # Each owning test name appears as a heading, with its codes beneath it.
+    assert "Captured Dead" in out
+    assert "Tautology" in out
+    assert "C31" in out and "C5" in out
+
+
+def test_render_robot_buckets_file_level_findings(tmp_path):
+    # A commented-out verification has no owning test, so it lands in the bucket.
+    body = """\
+*** Test Cases ***
+Real
+    Should Be Equal    ${a}    ${b}
+    # Should Be Equal    ${a}    ${c}
+"""
+    fs = _findings(tmp_path, body)
+    out = render_robot(fs)
+    assert "[suite-level]" in out
+    assert "CC" in out
+
+
+def test_render_robot_empty_is_clean_message(tmp_path):
+    assert render_robot([]).startswith("rffalsegreen: no false-positive")
+
+
+def test_format_robot_via_cli(tmp_path):
+    f = tmp_path / "t.robot"
+    f.write_text(_EMPTY_TEST, encoding="utf-8")
+    out = tmp_path / "report.txt"
+    rc = main([str(f), "--format", "robot", "--output", str(out)])
+    assert rc == 20  # C2 is high
+    body = out.read_text(encoding="utf-8")
+    assert "C2" in body

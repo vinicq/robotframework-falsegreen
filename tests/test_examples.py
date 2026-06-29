@@ -28,7 +28,7 @@ def _codes(name):
 EXPECTED = {
     "effectiveness.robot": {"C5", "C6", "C7", "C9", "C9b", "C11a", "C44", "R6", "R2"},
     "execution.robot": {
-        "C2", "C2b", "C3", "C20", "C21", "C32", "CC", "R1", "R4", "R5", "R7",
+        "C2", "C2b", "C3", "C20", "C21", "C31", "C32", "CC", "R1", "R4", "R5", "R7",
         "R8", "R8b",
     },
     "nondeterminism.robot": {"C16"},

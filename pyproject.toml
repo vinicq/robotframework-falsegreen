@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "robotframework-falsegreen"
-version = "0.5.1"
+version = "0.6.0"
 description = "Find Robot Framework tests that pass green without protecting anything: tests with no verification keyword, swallowed failures, always-true checks. Deterministic static scan, sibling of falsegreen (Python) and falsegreen-js (JS/TS)."
 readme = "README.md"
 requires-python = ">=3.8"

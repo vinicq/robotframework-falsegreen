@@ -126,6 +126,16 @@ R8b Verifies In Body Clean
     [Teardown]    Close Application
 
 
+# --- C31: a captured value the test never uses (it verifies something else) -
+C31 Captured Value Never Used
+    ${heading}=    Get Text    //h1
+    Should Be Equal    ${status}    active
+
+C31 Captured Value Used Clean
+    ${heading}=    Get Text    //h1
+    Should Be Equal    ${heading}    Welcome
+
+
 *** Keywords ***
 Open And Click
     [Arguments]    ${path}    ${selector}

@@ -28,6 +28,99 @@ intent-based pass lives in [falsegreen-skill](https://github.com/vinicq/falsegre
 | **robotframework-falsegreen** | Robot Framework | `pip install robotframework-falsegreen` | [PyPI](https://pypi.org/project/robotframework-falsegreen/) |
 | [falsegreen-skill](https://github.com/vinicq/falsegreen-skill) | semantic LLM pass | `npx falsegreen-skill analyze <path>` | [npm](https://www.npmjs.com/package/falsegreen-skill) |
 
+## Quick guide for first-time users
+
+New here? Start with these five sections. They get you from zero to a CI gate. The deeper reference (every code, the scope rules, the research) follows after.
+
+### What it does
+
+robotframework-falsegreen reads your Robot Framework suites and finds the test cases that pass green without verifying anything. A test can run keywords, report success, and never call a single verification keyword, so a bug ships and the green report lies about it. The scanner reads the `.robot` and `.resource` files only (it never runs them) and flags the cases a parser can prove have no oracle, an always-true check, a swallowed failure, or a skip.
+
+A test it flags, and the fix:
+
+```robotframework
+*** Test Cases ***
+# BAD: runs keywords, verifies nothing. Passes even if login is broken.
+Login Succeeds
+    Open Browser    https://app.example.com
+    Input Text    id:user    alice
+    Click Button    Login
+
+# CLEAN: adds a verification keyword. Fails if the page does not land.
+Login Succeeds
+    Open Browser    https://app.example.com
+    Input Text    id:user    alice
+    Click Button    Login
+    Page Should Contain    Welcome, alice
+```
+
+### Install
+
+```bash
+pip install robotframework-falsegreen
+```
+
+Needs Python 3.8 or newer. It depends on `robotframework` (the official parser it reads your suites with), pulled in automatically.
+
+### Quick start
+
+Point it at your suite folder:
+
+```bash
+rffalsegreen tests/
+```
+
+Run on the `Login Succeeds` example above and you get:
+
+```
+login.robot
+  low  C2b  L2    Login Succeeds  runs keywords but no verification keyword (no oracle)
+           level: unit   fix: add a verification keyword (Should..., a library assertion)
+
+0 high, 1 low. https://github.com/vinicq/robotframework-falsegreen
+By level: unit:1
+Top fixes:
+  C2b (1): add a verification keyword (Should..., a library assertion)
+```
+
+How to read that finding:
+
+- `login.robot` then `L2` - the file and line of the test case.
+- `C2b` - the code. C2b is "runs keywords but no verification keyword". The catalog (below) explains every code.
+- `Login Succeeds` - the test case name.
+- `level: unit` - which level of the test pyramid this suite sits at.
+- `fix:` - the one-line hint. Here: add a verification keyword.
+
+### Common options
+
+```bash
+rffalsegreen tests/ --json          # machine-readable JSON instead of text
+rffalsegreen tests/ --format sarif  # text (default) | json | sarif | junit
+rffalsegreen tests/ --disable C16   # turn specific codes off
+```
+
+Exit codes wire it into CI: `0` clean, `10` low-confidence findings only, `20` at least one high-confidence finding. Block the build on `20`.
+
+GitHub Actions:
+
+```yaml
+name: rffalsegreen
+on: [push, pull_request]
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.x" }
+      - run: pip install robotframework-falsegreen
+      - run: rffalsegreen tests/   # exit 20 fails the job
+```
+
+### What the codes mean
+
+Each finding carries a code and a confidence. HIGH codes are near-certain and block the commit; LOW codes warn and want a human look. Codes shared with the Python and JS scanners keep the same id (`C2b` no oracle, `C5` always true, `C7` self-compare); `R*` codes are Robot-specific (`R1` `Pass Execution` forces green, `R8` the only check sits in `[Setup]`). The full list is in the [What it detects](#what-it-detects) table below and the [online docs](https://vinicq.github.io/falsegreen-docs/).
+
 ## Why
 
 A green Robot suite is not proof of correctness. A test case can run keywords and never
