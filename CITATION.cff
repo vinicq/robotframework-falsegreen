@@ -4,7 +4,7 @@ title: "robotframework-falsegreen: find Robot Framework tests that pass green wi
 authors:
   - family-names: Queiroz
     given-names: Vinicius
-version: 0.6.2
+version: 0.6.3
 date-released: "2026-06-27"
 license: MIT
 repository-code: "https://github.com/vinicq/robotframework-falsegreen"
