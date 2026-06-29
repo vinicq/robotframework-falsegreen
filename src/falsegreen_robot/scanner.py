@@ -20,7 +20,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-__version__ = "0.5.0"  # keep in lockstep with pyproject.toml (test_version_lockstep enforces it)
+__version__ = "0.5.1"  # keep in lockstep with pyproject.toml (test_version_lockstep enforces it)
 TOOL_URI = "https://github.com/vinicq/robotframework-falsegreen"
 
 # --- case catalog. code -> (title, confidence, judgment J1-J6) -------------
@@ -261,6 +261,15 @@ def is_verification(keyword, args, local_keywords=None, extra_verify=None):
             key, sep, val = (a or "").partition("=")
             if sep and _norm(key) == "expected_status":
                 return _norm(val) not in _EXPECTED_STATUS_OFF and bool(val.strip())
+    # Run Keyword And Continue On Failure / And Warn On Failure    <kw>    *args -
+    # the soft-assert wrappers: the wrapped keyword still runs and is verified, the
+    # wrapper only changes how a failure is reported (continue / warn). It is an
+    # oracle exactly when the wrapped keyword is one, so recurse on the inner call.
+    if n in ("run keyword and continue on failure", "run keyword and warn on failure"):
+        inner = list(args or ())
+        if inner:
+            return is_verification(inner[0], inner[1:], local_keywords, extra_verify)
+        return False
     # Run Keywords    A    AND    B    AND    Should Be Equal ... — a chain that
     # runs each keyword in sequence. The verification can be any segment, so split
     # on the AND separator and check each segment's first token as a nested call.
@@ -331,13 +340,35 @@ def _referenced_names(call):
     return names
 
 
-def _swallow_status_unused(calls):
+def _control_condition_names(node):
+    """Variable names read by the condition/header of every IF/WHILE in the body
+    (recursing into nested blocks), lower-cased and bare. `IF ${status}` /
+    `WHILE not ${status}` consume the status in the block HEADER, not in a
+    KeywordCall - so a status read only there must still count as used (C3)."""
+    names = set()
+    for item in getattr(node, "body", None) or []:
+        cond = getattr(item, "condition", None)
+        if cond:
+            for m in _VAR_NAME_RE.finditer(cond):
+                names.add(_norm(m.group(1)))
+        if hasattr(item, "body"):
+            names |= _control_condition_names(item)
+    return names
+
+
+def _swallow_status_unused(calls, node=None):
     """C3 (status form): a Run Keyword And Ignore Error / Return Status whose first
     assigned variable (the status) is never referenced by a later keyword call.
     Returns the lineno of the offending swallow, or None.
 
     `${status}=    Run Keyword And Return Status    ...` followed by no use of
-    ${status} is the Robot try/except/pass - the failure is captured and dropped."""
+    ${status} is the Robot try/except/pass - the failure is captured and dropped.
+
+    A status consumed only by a control-block condition (`IF ${status}` /
+    `WHILE not ${status}` - the idiomatic Robot conditional) is read in the block
+    HEADER, never in a KeywordCall, so the body node is walked for condition
+    variables and those count as a use too (#78)."""
+    condition_names = _control_condition_names(node) if node is not None else set()
     swallows = []
     for idx, c in enumerate(calls):
         if type(c).__name__ != "KeywordCall" or not is_swallow(c.keyword):
@@ -349,7 +380,7 @@ def _swallow_status_unused(calls):
         if not status:
             continue
         used_later = any(status & _referenced_names(later) for later in calls[idx + 1:])
-        if not used_later:
+        if not used_later and not (status & condition_names):
             swallows.append(getattr(c, "lineno", 0) or 0)
     return swallows[0] if swallows else None
 
@@ -477,6 +508,31 @@ def _expected_status_off_value(args):
         if sep and _norm(key) == "expected_status" and _norm(val) in _EXPECTED_STATUS_OFF:
             return _norm(val)
     return None
+
+
+def _status_asserted_later(calls, idx, resp_names):
+    """True when a later `Should*` call asserts the status of a response assigned at
+    `calls[idx]` (#78). The author disabled the request-level oracle with
+    `expected_status=any` on purpose, then checks the status manually on the next
+    line - `Should Be Equal As Integers    ${resp.status_code}    200` or the
+    `${resp}[status_code]` item form. Matched against the response's assigned name
+    (`resp_names`), so an unrelated status assert does not suppress C9b."""
+    if not resp_names:
+        return False
+    for later in calls[idx + 1:]:
+        if type(later).__name__ != "KeywordCall":
+            continue
+        if "should" not in _norm(getattr(later, "keyword", "")):
+            continue
+        for a in getattr(later, "args", None) or ():
+            low = _norm(a)
+            if "status_code" not in low:
+                continue
+            # ${resp.status_code} (attribute) or ${resp}[status_code] (item access).
+            for name in resp_names:
+                if ("${%s.status_code}" % name) in low or ("${%s}[status_code]" % name) in low:
+                    return True
+    return False
 
 
 def _self_confirming_literal(calls):
@@ -792,7 +848,7 @@ def _call_level_smells(file, owner, calls, findings, local_keywords=None, extra_
     for svi_ln in _set_variable_if_pins_oracle(calls):
         findings.append(Finding(file, svi_ln, owner, "C5",
                                 "Set Variable If with a constant-true guard pins the expected value"))
-    for c in calls:
+    for c_idx, c in enumerate(calls):
         kw, args = c.keyword, list(getattr(c, "args", []) or [])
         ln = getattr(c, "lineno", 0) or 0
         # C23 runs first: a hard-coded IP URL can sit in the arguments of a
@@ -828,8 +884,11 @@ def _call_level_smells(file, owner, calls, findings, local_keywords=None, extra_
         if _norm(_strip_library_prefix(kw, local_keywords)).replace(" on session", "") in HTTP_METHODS:
             off = _expected_status_off_value(args)
             if off is not None:
-                findings.append(Finding(file, ln, owner, "C9b",
-                                        "expected_status=%s accepts any HTTP status" % off))
+                # Suppress when the body asserts this response's status manually right
+                # after (the author disabled the request oracle on purpose) - #78.
+                if not _status_asserted_later(calls, c_idx, _assigned_names(c)):
+                    findings.append(Finding(file, ln, owner, "C9b",
+                                            "expected_status=%s accepts any HTTP status" % off))
                 has_verification = True
                 continue
         if _norm(kw) == "should be equal" and len(args) >= 2:
@@ -900,7 +959,7 @@ def analyze_keyword(file, kw, findings, local_keywords=None, extra_verify=None):
                                 "verification after a terminator never runs"))
 
     # C3 (status form): a swallow whose status the keyword body never reads.
-    status_ln = _swallow_status_unused(calls)
+    status_ln = _swallow_status_unused(calls, kw)
     if status_ln is not None:
         findings.append(Finding(file, status_ln, name, "C3",
                                 "swallowed status is never asserted"))
@@ -1009,14 +1068,19 @@ def analyze_testcase(file, tc, findings, keyword_index=None, extra_verify=None, 
     # C3 (status form): the swallow assigns a status that no later step reads. The
     # failure is captured and dropped - the Robot try/except/pass - even when the
     # test verifies something else, so this is checked before the no-oracle paths.
-    status_ln = _swallow_status_unused(calls)
+    status_ln = _swallow_status_unused(calls, tc)
     if status_ln is not None:
         findings.append(Finding(file, status_ln, name, "C3",
                                 "swallowed status is never asserted"))
         return
 
-    # C3: swallow without an asserted status
-    if not has_verification and any(is_swallow(c.keyword) for c in calls):
+    # C3: a swallow whose result is DISCARDED ENTIRELY (no assignment). A swallow
+    # WITH an assigned status is fully handled by the status-form check above - it
+    # fires there when the status is unused and stays silent when a later step or a
+    # control-block header reads it (#78), so it must not be re-flagged here.
+    if not has_verification and any(
+            is_swallow(c.keyword) and not (getattr(c, "assign", None) or ())
+            for c in calls):
         findings.append(Finding(file, line, name, "C3"))
         return
 
