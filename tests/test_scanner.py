@@ -2171,3 +2171,117 @@ Snapshot Then Recompute
     Should Be Equal    ${value}    ${expected}
 """
     assert "C11a" not in codes(tmp_path, body)
+
+
+# --- #78: field-validation precision fixes ------------------------------------
+# FP-1 (C3): a status consumed only by a control-block header was misread as unused.
+def test_c3_status_truly_unused(tmp_path):
+    # The status is captured and then nothing reads it - the failure is dropped (C3).
+    body = """\
+*** Test Cases ***
+Dropped Status
+    ${s}=    Run Keyword And Return Status    Should Exist    x
+    Log    moving on
+"""
+    assert "C3" in codes(tmp_path, body)
+
+
+def test_no_c3_status_read_by_if_header(tmp_path):
+    # The idiomatic conditional: the status drives an IF header. It is read, so no C3.
+    body = """\
+*** Test Cases ***
+Conditional On Status
+    ${s}=    Run Keyword And Return Status    Should Exist    x
+    IF    ${s}
+        Log    it exists
+    END
+"""
+    assert "C3" not in codes(tmp_path, body)
+
+
+def test_no_c3_status_read_by_while_header(tmp_path):
+    # A WHILE header reads the status too (the negated retry form).
+    body = """\
+*** Test Cases ***
+Loop Until Status
+    ${s}=    Run Keyword And Return Status    Should Exist    x
+    WHILE    not ${s}
+        Log    retrying
+        ${s}=    Run Keyword And Return Status    Should Exist    x
+    END
+"""
+    assert "C3" not in codes(tmp_path, body)
+
+
+# FP-2 (R2): a soft-assert wrapper around a real assertion is a verification.
+def test_r2_continue_on_failure_around_non_oracle(tmp_path):
+    # The wrapper runs Log, which verifies nothing - the verifier keyword is hollow (R2).
+    body = """\
+*** Keywords ***
+Verify X
+    Run Keyword And Continue On Failure    Log    msg
+"""
+    assert "R2" in codes(tmp_path, body)
+
+
+def test_no_r2_continue_on_failure_around_assertion(tmp_path):
+    # Continue On Failure wrapping a real comparison is the standard soft-assert idiom.
+    body = """\
+*** Keywords ***
+Verify X
+    Run Keyword And Continue On Failure    Should Be Equal    ${a}    ${b}
+"""
+    assert "R2" not in codes(tmp_path, body)
+
+
+def test_no_r2_warn_on_failure_around_assertion(tmp_path):
+    # The Warn On Failure variant is the same soft-assert wrapper.
+    body = """\
+*** Keywords ***
+Verify X
+    Run Keyword And Warn On Failure    Should Be Equal    ${a}    ${b}
+"""
+    assert "R2" not in codes(tmp_path, body)
+
+
+# FP-3 (C9b): expected_status=any with a manual status assert on the next line.
+def test_c9b_expected_status_any_without_manual_assert(tmp_path):
+    # The request oracle is disabled and nothing checks the status afterwards (C9b).
+    body = """\
+*** Settings ***
+Library    RequestsLibrary
+
+*** Test Cases ***
+Disabled No Followup
+    ${r}=    GET    https://api.example.com/users    expected_status=any
+    Log    ${r.status_code}
+"""
+    assert "C9b" in codes(tmp_path, body)
+
+
+def test_no_c9b_when_status_asserted_manually(tmp_path):
+    # The author disabled the request oracle on purpose to check the status by hand.
+    body = """\
+*** Settings ***
+Library    RequestsLibrary
+
+*** Test Cases ***
+Manual Status Check
+    ${r}=    GET    https://api.example.com/users    expected_status=any
+    Should Be Equal As Integers    ${r.status_code}    200
+"""
+    assert "C9b" not in codes(tmp_path, body)
+
+
+def test_no_c9b_when_status_asserted_via_item_access(tmp_path):
+    # The dict-item form of the same manual status check also suppresses C9b.
+    body = """\
+*** Settings ***
+Library    RequestsLibrary
+
+*** Test Cases ***
+Manual Status Item
+    ${r}=    GET    https://api.example.com/users    expected_status=any
+    Should Be Equal As Integers    ${r}[status_code]    200
+"""
+    assert "C9b" not in codes(tmp_path, body)

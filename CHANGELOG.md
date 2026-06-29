@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-06-29
+
+### Fixed
+
+- `C3` (#78): a status read only by a control-block header (`${s}=  Run Keyword And
+  Return Status  ...` then `IF ${s}` or `WHILE not ${s}`, the idiomatic Robot
+  conditional) is no longer reported as never asserted. The later-references set now
+  also collects the variables read by every `IF`/`WHILE` condition in the body, and
+  the generic swallow path fires only when the result is discarded entirely (no
+  assignment). Found in field validation across roughly fifteen sampled repos.
+- `R2` (#78): `Run Keyword And Continue On Failure` and `Run Keyword And Warn On
+  Failure` wrapping an assertion now count as verification. These soft-assert
+  wrappers run the wrapped keyword and only change how a failure is reported, so a
+  verifier keyword whose body is `Run Keyword And Continue On Failure  Should Be
+  Equal ...` is a real oracle, not a hollow one. `is_verification` recurses on the
+  wrapped keyword. This also clears the latent `C2b`/`R8` false-green on the same
+  idiom. Field validation flagged it in 19 of 40 sampled cases.
+- `C9b` (#78): `expected_status=any` is no longer flagged when the body asserts the
+  response status by hand on a later line (`Should Be Equal As Integers
+  ${r.status_code}  200`, attribute or `${r}[status_code]` item form). Disabling the
+  request-level oracle to check the status manually is intentional, so C9b is
+  suppressed when a later `Should*` references the assigned response's status.
+
 ## [0.5.0] - 2026-06-29
 
 ### Added
