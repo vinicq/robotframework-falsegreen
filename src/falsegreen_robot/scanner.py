@@ -164,6 +164,15 @@ HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 # expected_status values that DISABLE the check (no oracle): the request accepts any outcome.
 _EXPECTED_STATUS_OFF = {"any", "anything"}
 SWALLOW_KEYWORDS = {"run keyword and ignore error", "run keyword and return status"}
+# BuiltIn equality assertions that are tautological when both sides are identical
+# (C7 with a ${var}, C5 with a literal). The typed "As Integers/Numbers/Strings"
+# variants are idiomatic Robot and just as vacuous as plain Should Be Equal (#89).
+SHOULD_BE_EQUAL_KEYWORDS = {
+    "should be equal",
+    "should be equal as integers",
+    "should be equal as numbers",
+    "should be equal as strings",
+}
 # Keywords that UNCONDITIONALLY end the current block: nothing after them in the
 # same body runs. A test case cannot use [Return], so the test-level terminators
 # are the keywords that always stop execution (Fail aborts, Pass Execution
@@ -190,6 +199,11 @@ _CATCH_ALL_ERROR_RE = re.compile(r"^(?:GLOB:\s*)?\*+$", re.IGNORECASE)
 # e.g. `REGEXP:.*` or `REGEXP:^.*$`. A bare `.*` is NOT this: without REGEXP: it is
 # glob, where `.` is literal, so it only matches messages starting with a dot.
 _CATCH_ALL_REGEXP_RE = re.compile(r"^REGEXP:\s*\^?\(?\.[*+]\??\)?\$?$", re.IGNORECASE)
+# STARTS: / EQUALS: with an EMPTY pattern is a catch-all: every message starts with
+# "" (STARTS: matches any error) and EQUALS: on empty matches messages that are
+# themselves empty - both vacuous oracles for `Expect Error` (#89). A non-empty
+# prefix (STARTS:Boom) is specific and stays clean.
+_CATCH_ALL_PREFIX_RE = re.compile(r"^(?:STARTS|EQUALS):\s*$", re.IGNORECASE)
 
 
 def _norm(name):
@@ -321,6 +335,27 @@ def is_swallow(keyword):
     return _norm(keyword) in SWALLOW_KEYWORDS
 
 
+# Soft-assert wrappers that take `<inner_kw>  *inner_args` and still let the test
+# fail: a swallow nested under one is the same dropped-status C3, so peel one layer
+# to find the real keyword (#89 P3). Warn On Failure is excluded on purpose - it
+# already forces the test green, so nesting adds nothing to detect there.
+_SOFT_ASSERT_WRAPPERS = {"run keyword and continue on failure"}
+
+
+def _effective_swallow(call):
+    """Return `(keyword, [args])` of the swallow this call really runs, peeling one
+    soft-assert wrapper. `Run Keyword And Continue On Failure  Run Keyword And Return
+    Status  ...` -> the inner Return Status call. Returns None when it is not a
+    swallow (directly or wrapped)."""
+    kw = getattr(call, "keyword", None)
+    args = list(getattr(call, "args", None) or ())
+    if is_swallow(kw):
+        return kw, args
+    if _norm(kw) in _SOFT_ASSERT_WRAPPERS and args and is_swallow(args[0]):
+        return args[0], args[1:]
+    return None
+
+
 _VAR_NAME_RE = re.compile(r"[\$@&]\{([^{}]+)\}")
 
 
@@ -378,7 +413,7 @@ def _swallow_status_unused(calls, node=None):
     condition_names = _control_condition_names(node) if node is not None else set()
     swallows = []
     for idx, c in enumerate(calls):
-        if type(c).__name__ != "KeywordCall" or not is_swallow(c.keyword):
+        if type(c).__name__ != "KeywordCall" or _effective_swallow(c) is None:
             continue
         assigned = list(getattr(c, "assign", None) or ())
         if not assigned:
@@ -938,7 +973,8 @@ def _call_level_smells(file, owner, calls, findings, local_keywords=None, extra_
             continue
         if _norm(kw) == "run keyword and expect error" and args \
                 and (_CATCH_ALL_ERROR_RE.match((args[0] or "").strip())
-                     or _CATCH_ALL_REGEXP_RE.match((args[0] or "").strip())):
+                     or _CATCH_ALL_REGEXP_RE.match((args[0] or "").strip())
+                     or _CATCH_ALL_PREFIX_RE.match((args[0] or "").strip())):
             findings.append(Finding(file, ln, owner, "C9", "expects any error (catch-all pattern)"))
             has_verification = True
             continue
@@ -956,7 +992,7 @@ def _call_level_smells(file, owner, calls, findings, local_keywords=None, extra_
                                             "expected_status=%s accepts any HTTP status" % off))
                 has_verification = True
                 continue
-        if _norm(kw) == "should be equal" and len(args) >= 2:
+        if _norm(_strip_library_prefix(kw, local_keywords)) in SHOULD_BE_EQUAL_KEYWORDS and len(args) >= 2:
             if args[0] == args[1] and ln not in dead:
                 code = "C7" if args[0].startswith("${") else "C5"
                 findings.append(Finding(file, ln, owner, code, "both sides are identical"))
