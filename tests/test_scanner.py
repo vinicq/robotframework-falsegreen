@@ -247,6 +247,52 @@ Self
     assert "C7" in codes(tmp_path, body)
 
 
+# #89 item 1: the typed Should Be Equal As variants are as tautological as the
+# plain form when both sides are identical - C7 with a ${var}, C5 with a literal.
+@pytest.mark.parametrize("kw", [
+    "Should Be Equal As Integers",
+    "Should Be Equal As Numbers",
+    "Should Be Equal As Strings",
+    "BuiltIn.Should Be Equal As Integers",
+])
+def test_c7_typed_should_be_equal_self_compare(tmp_path, kw):
+    body = """\
+*** Test Cases ***
+Self
+    %s    ${x}    ${x}
+""" % kw
+    assert "C7" in codes(tmp_path, body)
+
+
+@pytest.mark.parametrize("kw,val", [
+    ("Should Be Equal As Integers", "5"),
+    ("Should Be Equal As Numbers", "5"),
+    ("Should Be Equal As Strings", "ok"),
+])
+def test_c5_typed_should_be_equal_identical_literals(tmp_path, kw, val):
+    body = """\
+*** Test Cases ***
+Const
+    %s    %s    %s
+""" % (kw, val, val)
+    assert "C5" in codes(tmp_path, body)
+
+
+@pytest.mark.parametrize("step", [
+    "Should Be Equal As Integers    ${a}    ${b}",
+    "Should Be Equal As Numbers    5    6",
+    "Should Be Equal As Strings    foo    bar",
+])
+def test_no_c5_c7_for_distinct_typed_should_be_equal(tmp_path, step):
+    body = """\
+*** Test Cases ***
+Distinct
+    %s
+""" % step
+    found = codes(tmp_path, body)
+    assert "C5" not in found and "C7" not in found
+
+
 def test_c16_sleep(tmp_path):
     body = """\
 *** Test Cases ***
@@ -1065,6 +1111,30 @@ Return Status Dropped
     assert "C3" in codes(tmp_path, body)
 
 
+# #89 item 3: a Return Status swallow nested under a Continue On Failure wrapper is
+# the same dropped-status C3 (HIGH), not the generic C2b (LOW) it used to fall to.
+def test_c3_nested_swallow_under_continue_on_failure(tmp_path):
+    body = """\
+*** Test Cases ***
+Nested Swallow
+    ${status}=    Run Keyword And Continue On Failure    Run Keyword And Return Status    Should Be Equal    ${1}    ${2}
+    Log    done
+"""
+    found = codes(tmp_path, body)
+    assert "C3" in found and "C2b" not in found
+
+
+def test_no_c3_nested_swallow_status_read_later(tmp_path):
+    # The wrapped status IS consumed afterwards - not swallowed, so no C3.
+    body = """\
+*** Test Cases ***
+Nested Swallow Used
+    ${status}=    Run Keyword And Continue On Failure    Run Keyword And Return Status    Should Be Equal    ${1}    ${2}
+    Should Be True    ${status}
+"""
+    assert "C3" not in codes(tmp_path, body)
+
+
 def test_c3_status_form_in_keyword(tmp_path):
     body = """\
 *** Keywords ***
@@ -1191,6 +1261,28 @@ def test_no_c9_when_expect_error_equals_a_literal_star(tmp_path):
 *** Test Cases ***
 Expects The Literal Star Message
     Run Keyword And Expect Error    EQUALS:*    Do Risky Thing
+"""
+    assert "C9" not in codes(tmp_path, body)
+
+
+# #89 item 2: STARTS: / EQUALS: with an EMPTY pattern is a catch-all. Every message
+# starts with "", so STARTS: accepts any error - a vacuous oracle (C9).
+@pytest.mark.parametrize("pat", ["STARTS:", "STARTS: ", "EQUALS:", "starts:"])
+def test_c9_expect_error_empty_prefix_is_catch_all(tmp_path, pat):
+    body = """\
+*** Test Cases ***
+Expects Any Error Via Empty Prefix
+    Run Keyword And Expect Error    %s    Do Risky Thing
+""" % pat
+    assert "C9" in codes(tmp_path, body), pat
+
+
+def test_no_c9_when_expect_error_starts_prefix_is_nonempty(tmp_path):
+    # STARTS: with a real prefix stays a specific matcher - not a catch-all.
+    body = """\
+*** Test Cases ***
+Expects A Real Prefix
+    Run Keyword And Expect Error    STARTS: connection    Do Risky Thing
 """
     assert "C9" not in codes(tmp_path, body)
 
