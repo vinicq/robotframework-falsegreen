@@ -263,14 +263,19 @@ def is_verification(keyword, args, local_keywords=None, extra_verify=None):
             key, sep, val = (a or "").partition("=")
             if sep and _norm(key) == "expected_status":
                 return _norm(val) not in _EXPECTED_STATUS_OFF and bool(val.strip())
-    # Run Keyword And Continue On Failure / And Warn On Failure    <kw>    *args -
-    # the soft-assert wrappers: the wrapped keyword still runs and is verified, the
-    # wrapper only changes how a failure is reported (continue / warn). It is an
-    # oracle exactly when the wrapped keyword is one, so recurse on the inner call.
-    if n in ("run keyword and continue on failure", "run keyword and warn on failure"):
+    # Run Keyword And Continue On Failure    <kw>    *args - a soft-assert wrapper:
+    # the wrapped keyword still runs and a failure is recorded, so the test FAILS at
+    # the end. It is an oracle exactly when the wrapped keyword is one, so recurse.
+    if n == "run keyword and continue on failure":
         inner = list(args or ())
         if inner:
             return is_verification(inner[0], inner[1:], local_keywords, extra_verify)
+        return False
+    # Run Keyword And Warn On Failure    <kw>    *args - a failure only logs a WARN
+    # and the test stays green (BuiltIn semantics). The wrapped assertion can never
+    # reprove the test, so this is NOT an oracle regardless of the inner keyword -
+    # same swallow problem as Run Keyword And Ignore Error (#88).
+    if n == "run keyword and warn on failure":
         return False
     # Run Keywords    A    AND    B    AND    Should Be Equal ... — a chain that
     # runs each keyword in sequence. The verification can be any segment, so split

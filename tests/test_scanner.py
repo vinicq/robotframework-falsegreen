@@ -2275,14 +2275,36 @@ Verify X
     assert "R2" not in codes(tmp_path, body)
 
 
-def test_no_r2_warn_on_failure_around_assertion(tmp_path):
-    # The Warn On Failure variant is the same soft-assert wrapper.
+def test_r2_warn_on_failure_around_assertion_is_hollow(tmp_path):
+    # #88: Warn On Failure only logs a WARN, the test stays green - the wrapped
+    # assertion cannot reprove the test, so the verifier keyword is hollow (R2).
     body = """\
 *** Keywords ***
 Verify X
     Run Keyword And Warn On Failure    Should Be Equal    ${a}    ${b}
 """
-    assert "R2" not in codes(tmp_path, body)
+    assert "R2" in codes(tmp_path, body)
+
+
+# #88: Warn On Failure is not an oracle (the failure only logs a WARN); Continue
+# On Failure still fails the test at the end and remains a valid oracle.
+def test_warn_on_failure_is_not_an_oracle_c2b(tmp_path):
+    body = """\
+*** Test Cases ***
+Falso Verde
+    Run Keyword And Warn On Failure    Should Be Equal    ${1}    ${2}
+"""
+    assert "C2b" in codes(tmp_path, body)
+
+
+def test_continue_on_failure_stays_an_oracle(tmp_path):
+    body = """\
+*** Test Cases ***
+Soft Assert
+    Continue On Failure
+    Run Keyword And Continue On Failure    Should Be Equal    ${1}    ${2}
+"""
+    assert "C2b" not in codes(tmp_path, body)
 
 
 # FP-3 (C9b): expected_status=any with a manual status assert on the next line.
